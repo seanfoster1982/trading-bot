@@ -210,14 +210,22 @@ def get_macro_score() -> float | None:
 def check_higher_tf_alignment(address: str) -> tuple[bool, list[str]]:
     """Higher timeframes (1H + 4H + 1D) must all be bullish for long entry.
     Bullish = close > EMA 50 AND EMA 50 > EMA 200 (or close > EMA 200 if 50 missing).
+
+    Requires at least 2 of the 3 timeframes to have valid EMA_200 data; if
+    fewer than 2 are available, the alignment check fails. This prevents a
+    silent pass when the indicator pipeline hasn't backfilled higher
+    timeframes yet — previously a token with 0 or 1 available TFs could
+    bypass the trend filter entirely.
     """
     reasons = []
     ok = True
+    tfs_with_data = 0
     for interval in ["1H", "4H", "1D"]:
         ind = get_latest_indicators(address, interval)
         if ind is None or ind["ema_200"] is None:
             reasons.append(f"{interval}: no data (skipping)")
             continue  # don't fail just because data missing on one tf
+        tfs_with_data += 1
         close = ind["close"]
         ema_50 = ind["ema_50"]
         ema_200 = ind["ema_200"]
@@ -232,6 +240,14 @@ def check_higher_tf_alignment(address: str) -> tuple[bool, list[str]]:
         else:
             reasons.append(f"{interval}: NOT bullish")
             ok = False
+
+    # Insufficient higher-TF coverage: refuse to confirm trend on <2 TFs of data.
+    if tfs_with_data < 2:
+        reasons.append(
+            f"insufficient higher-TF data: only {tfs_with_data}/3 timeframes have EMA_200 (need >=2)"
+        )
+        return False, reasons
+
     return ok, reasons
 
 

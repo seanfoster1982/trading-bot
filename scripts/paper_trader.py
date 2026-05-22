@@ -29,10 +29,17 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from strategy import ALLOCATION  # noqa: E402  (sys.path tweak above)
+
 DB_PATH = Path("data/memecoins.db")
 
 # Max position lifetime (auto-close after this even if no stop/target hit)
 MAX_POSITION_AGE_HOURS = 72
+
+# Signals older than this are considered stale and will not be opened as new
+# positions. Prevents replay of yesterday's prices when the trader runs after
+# a backlog or outage.
+SIGNAL_TTL_MINUTES = 30
 
 
 def init_paper_db():
@@ -68,7 +75,12 @@ def init_paper_db():
 
 
 def get_unfilled_buy_signals():
-    """Get BUY signals that don\'t have an open paper trade yet."""
+    """Get BUY signals that don't have an open paper trade yet.
+
+    Filters out stale signals (generated more than SIGNAL_TTL_MINUTES ago) so we
+    never open a position based on an old price snapshot.
+    """
+    min_generated_at = int(time.time()) - (SIGNAL_TTL_MINUTES * 60)
     conn = sqlite3.connect(DB_PATH)
     rows = conn.execute("""
         SELECT s.id, s.symbol, s.address, s.strategy,
@@ -78,8 +90,9 @@ def get_unfilled_buy_signals():
         LEFT JOIN paper_trades p ON p.signal_id = s.id
         WHERE s.action = 'BUY'
           AND p.id IS NULL
+          AND s.generated_at >= ?
         ORDER BY s.generated_at ASC
-    """).fetchall()
+    """, (min_generated_at,)).fetchall()
     conn.close()
     cols = ["id", "symbol", "address", "strategy", "entry_price",
             "stop_loss", "take_profit", "position_size_usd", "generated_at"]
@@ -158,12 +171,66 @@ def available_capital() -> float:
     return START_CAPITAL_USD + get_realized_pnl() - get_deployed_capital()
 
 
+def count_open_positions_by_strategy(strategy: str) -> int:
+    """Number of currently-open paper trades for a given strategy bucket."""
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute(
+        "SELECT COUNT(*) FROM paper_trades WHERE closed_at IS NULL AND strategy = ?",
+        (strategy,),
+    ).fetchone()
+    conn.close()
+    return int(row[0]) if row else 0
+
+
 def open_position(sig):
-    """Open a paper trade for a signal. Position size already in USD from signal."""
-    entry_price = sig["entry_price"]
+    """Open a paper trade for a signal at the CURRENT market price.
+
+    The signal's entry_price is treated as historical context only: it tells us
+    the price the strategy saw when it fired, and is used to derive the risk
+    distance (entry - stop) the strategy intended. The actual fill uses the
+    latest 5m close from the indicators table; stop_loss and take_profit are
+    recomputed around that fill so the same risk shape is preserved.
+
+    If no current price is available, skip the trade rather than fall back to
+    the stale signal price.
+    """
+    signal_entry = sig["entry_price"]
+    signal_stop = sig["stop_loss"]
+    signal_tp = sig["take_profit"]
     position_usd = sig["position_size_usd"]
-    if entry_price <= 0 or position_usd <= 0:
-        return False, "invalid entry price or size"
+    strategy = sig["strategy"]
+    if signal_entry <= 0 or position_usd <= 0:
+        return False, "invalid signal entry price or size"
+
+    # MAX-POSITIONS CAP: refuse to open if this bucket is already at its limit.
+    # ALLOCATION[strategy]["max_positions"] is the per-strategy hard cap from
+    # strategy.py (e.g. momentum=3, whale_copy=2, lottery=5).
+    cap = ALLOCATION.get(strategy, {}).get("max_positions")
+    if cap is not None:
+        n_open = count_open_positions_by_strategy(strategy)
+        if n_open >= cap:
+            return False, f"max_positions reached for {strategy} ({n_open}/{cap})"
+
+    current_price, _ = get_current_price(sig["address"])
+    if current_price is None or current_price <= 0:
+        return False, "no current price available (skipping rather than using stale signal price)"
+
+    # Preserve the risk distance the signal intended (in absolute price units).
+    # If the signal's stop was nonsensical (>= entry), fall back to a conservative
+    # 5% stop below the actual fill — same fallback compute_stop_loss uses.
+    risk_distance = signal_entry - signal_stop
+    if risk_distance <= 0:
+        risk_distance = current_price * 0.05
+
+    entry_price = current_price
+    stop_loss = round(entry_price - risk_distance, 8)
+
+    # Preserve reward:risk ratio from the original signal when possible.
+    if signal_tp is not None and signal_tp > signal_entry and (signal_entry - signal_stop) > 0:
+        rr = (signal_tp - signal_entry) / (signal_entry - signal_stop)
+        take_profit = round(entry_price + (risk_distance * rr), 8)
+    else:
+        take_profit = None
 
     # CAPITAL CAP: refuse to open if not enough free capital
     avail = available_capital()
@@ -181,11 +248,15 @@ def open_position(sig):
     """, (
         sig["id"], sig["symbol"], sig["address"], sig["strategy"],
         int(time.time()), entry_price, position_usd, tokens,
-        sig["stop_loss"], sig["take_profit"],
+        stop_loss, take_profit,
     ))
     conn.commit()
     conn.close()
-    return True, f"opened at {entry_price:.8f} with {tokens:,.4f} tokens"
+    drift_pct = (entry_price - signal_entry) / signal_entry * 100
+    return True, (
+        f"opened at {entry_price:.8f} ({drift_pct:+.2f}% vs signal {signal_entry:.8f}) "
+        f"with {tokens:,.4f} tokens, stop={stop_loss:.8f}"
+    )
 
 
 def close_position(trade_id, close_price, close_reason, tokens_held,
