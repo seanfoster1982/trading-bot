@@ -1,0 +1,780 @@
+{
+  "generated_at": "2026-05-10T21:12:32.588890+00:00",
+  "qualified_count": 43,
+  "qualified": [
+    {
+      "wallet": "0x2005d16a84ceefa912d4e380cd32e7ff827875ea",
+      "trade_count_30d": 455,
+      "trade_count_90d": 457,
+      "pnl_30d_usd": 489138.19,
+      "pnl_90d_usd": 489122.95,
+      "win_rate_30d": 0.778,
+      "win_rate_90d": 0.777,
+      "total_volume_usd": 4507056.92,
+      "last_trade_at": "2026-05-17T00:00:00+00:00",
+      "sample_markets": [
+        "Will SC Freiburg win on 2026-05-10?",
+        "Will West Ham United FC win on 2026-05-10?",
+        "Will Paris Saint-Germain FC win on 2026-04-28?",
+        "Counter-Strike: Natus Vincere vs Vitality - Map 2 Winner",
+        "Tampa Bay Rays vs. Boston Red Sox"
+      ]
+    },
+    {
+      "wallet": "0x5a218c7ad04135830a45c41aaed7294df7809318",
+      "trade_count_30d": 415,
+      "trade_count_90d": 438,
+      "pnl_30d_usd": 443364.84,
+      "pnl_90d_usd": 466560.82,
+      "win_rate_30d": 0.949,
+      "win_rate_90d": 0.947,
+      "total_volume_usd": 3227331.91,
+      "last_trade_at": "2027-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Will Vladimir Cerr\u00f3n win the 2026 Peruvian presidential election?",
+        "Will Fiorella Molinelli win the 2026 Peruvian presidential election?",
+        "Will Jos\u00e9 Williams win the 2026 Peruvian presidential election?",
+        "Will Enrique Valderrama win the 2026 Peruvian presidential election?",
+        "Will Roberto Chiabra win the 2026 Peruvian presidential election?"
+      ]
+    },
+    {
+      "wallet": "0x53757615de1c42b83f893b79d4241a009dc2aeea",
+      "trade_count_30d": 242,
+      "trade_count_90d": 242,
+      "pnl_30d_usd": 211563.82,
+      "pnl_90d_usd": 211563.82,
+      "win_rate_30d": 0.335,
+      "win_rate_90d": 0.335,
+      "total_volume_usd": 8062315.88,
+      "last_trade_at": "2026-07-01T00:00:00+00:00",
+      "sample_markets": [
+        "Thunder vs. Lakers",
+        "Lakers vs. Thunder",
+        "Lakers vs. Rockets",
+        "Lakers vs. Thunder",
+        "Spurs vs. Timberwolves"
+      ]
+    },
+    {
+      "wallet": "0x24c8cf69a0e0a17eee21f69d29752bfa32e823e1",
+      "trade_count_30d": 79,
+      "trade_count_90d": 96,
+      "pnl_30d_usd": 125762.24,
+      "pnl_90d_usd": 152566.72,
+      "win_rate_30d": 0.684,
+      "win_rate_90d": 0.719,
+      "total_volume_usd": 1656590.65,
+      "last_trade_at": "2028-11-07T00:00:00+00:00",
+      "sample_markets": [
+        "Will the next Prime Minister of Hungary be Kl\u00e1ra Dobrev?",
+        "Will the next Prime Minister of Hungary be L\u00e1szl\u00f3 Toroczkai?",
+        "Will the Fed decrease interest rates by 50+ bps after the April 2026 meeting?",
+        "Will the next Prime Minister of Hungary be J\u00e1nos L\u00e1z\u00e1r?",
+        "Will Rick Reider be confirmed as Fed Chair?"
+      ]
+    },
+    {
+      "wallet": "0x204f72f35326db932158cba6adff0b9a1da95e14",
+      "trade_count_30d": 102,
+      "trade_count_90d": 102,
+      "pnl_30d_usd": 90261.43,
+      "pnl_90d_usd": 90261.43,
+      "win_rate_30d": 0.588,
+      "win_rate_90d": 0.588,
+      "total_volume_usd": 1635074.08,
+      "last_trade_at": "2026-05-17T00:00:00+00:00",
+      "sample_markets": [
+        "Will FC Barcelona win on 2026-05-10?",
+        "Will Arsenal FC win on 2026-05-10?",
+        "Will Real Oviedo win on 2026-05-10?",
+        "FC Barcelona vs. Real Madrid CF: O/U 3.5",
+        "Will FC Bayern M\u00fcnchen win on 2026-05-09?"
+      ]
+    },
+    {
+      "wallet": "0xfc2f4f50ce2f6045d35558a5e2d8d4b2ac6610c7",
+      "trade_count_30d": 136,
+      "trade_count_90d": 216,
+      "pnl_30d_usd": 72222.51,
+      "pnl_90d_usd": 97227.67,
+      "win_rate_30d": 0.713,
+      "win_rate_90d": 0.667,
+      "total_volume_usd": 6553356.19,
+      "last_trade_at": "2026-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "US x Iran ceasefire by March 31?",
+        "US strikes Iran by February 24, 2026?",
+        "US x Iran permanent peace deal by May 11, 2026?",
+        "US x Iran permanent peace deal by April 30, 2026?",
+        "US forces enter Iran by April 30?"
+      ]
+    },
+    {
+      "wallet": "0x84cfffc3f16dcc353094de30d4a45226eccd2f63",
+      "trade_count_30d": 105,
+      "trade_count_90d": 105,
+      "pnl_30d_usd": 76464.31,
+      "pnl_90d_usd": 76464.31,
+      "win_rate_30d": 0.6,
+      "win_rate_90d": 0.6,
+      "total_volume_usd": 1510550.84,
+      "last_trade_at": "2026-12-19T00:00:00+00:00",
+      "sample_markets": [
+        "Will Real Madrid CF win on 2026-05-10?",
+        "Will the San Antonio Spurs win the 2026 NBA Finals?",
+        "Will the Oklahoma City Thunder win the 2026 NBA Finals?",
+        "Knicks vs. 76ers",
+        "Will Paris Saint-Germain FC win on 2026-05-10?"
+      ]
+    },
+    {
+      "wallet": "0x7c3db723f1d4d8cb9c550095203b686cb11e5c6b",
+      "trade_count_30d": 74,
+      "trade_count_90d": 77,
+      "pnl_30d_usd": 58556.81,
+      "pnl_90d_usd": 59438.95,
+      "win_rate_30d": 0.716,
+      "win_rate_90d": 0.714,
+      "total_volume_usd": 394479.99,
+      "last_trade_at": "2028-11-07T00:00:00+00:00",
+      "sample_markets": [
+        "Will the U.S. invade Iran before 2027?",
+        "US x Iran permanent peace deal by May 31, 2026?",
+        "Will the Iranian regime fall by June 30?",
+        "Will Kamala Harris win the 2028 US Presidential Election?",
+        "Will Josh Shapiro win the 2028 US Presidential Election?"
+      ]
+    },
+    {
+      "wallet": "0xc6587b11a2209e46dfe3928b31c5514a8e33b784",
+      "trade_count_30d": 17,
+      "trade_count_90d": 17,
+      "pnl_30d_usd": 57387.06,
+      "pnl_90d_usd": 57387.06,
+      "win_rate_30d": 0.588,
+      "win_rate_90d": 0.588,
+      "total_volume_usd": 1118669.38,
+      "last_trade_at": "2026-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Will the Iranian regime fall by June 30?",
+        "Trump announces end of military operations against Iran by April 30th?",
+        "US x Iran permanent peace deal by April 30, 2026?",
+        "Strait of Hormuz traffic returns to normal by end of May?",
+        "US x Iran permanent peace deal by May 31, 2026?"
+      ]
+    },
+    {
+      "wallet": "0xa5e3044fd953605f9407d58c76e48fd75a394d7e",
+      "trade_count_30d": 244,
+      "trade_count_90d": 249,
+      "pnl_30d_usd": 44433.83,
+      "pnl_90d_usd": 44910.65,
+      "win_rate_30d": 0.549,
+      "win_rate_90d": 0.55,
+      "total_volume_usd": 454094.95,
+      "last_trade_at": "2027-01-25T00:00:00+00:00",
+      "sample_markets": [
+        "Will Raphinha win the 2026 Ballon d'Or?",
+        "US-Iran nuclear deal by May 31?",
+        "Will Bitcoin reach $100,000 in May?",
+        "Will Bruno Fernandes win the 2026 Ballon d'Or?",
+        "Will Bitcoin reach $90,000 in May?"
+      ]
+    },
+    {
+      "wallet": "0x7fea691e28d169a33c500607279f2acb49058f74",
+      "trade_count_30d": 208,
+      "trade_count_90d": 263,
+      "pnl_30d_usd": 25417.66,
+      "pnl_90d_usd": 95690.94,
+      "win_rate_30d": 0.678,
+      "win_rate_90d": 0.73,
+      "total_volume_usd": 225228.12,
+      "last_trade_at": "2026-05-17T00:00:00+00:00",
+      "sample_markets": [
+        "Will Aston Villa FC vs. Bologna FC 1909 end in a draw?",
+        "Will Taylor Swift x Travis Kelce podcast get more than 15m views on day 1?",
+        "Will RC Strasbourg Alsace win on 2026-04-16?",
+        "Will AZ win on 2026-04-16?",
+        "Will Elon tweet 225\u2013249 times May 2\u20139?"
+      ]
+    },
+    {
+      "wallet": "0xdf17f4a8dd01a4cfa6fc3da323a2baee5f8697d1",
+      "trade_count_30d": 56,
+      "trade_count_90d": 57,
+      "pnl_30d_usd": 20807.01,
+      "pnl_90d_usd": 20788.61,
+      "win_rate_30d": 0.679,
+      "win_rate_90d": 0.667,
+      "total_volume_usd": 809037.16,
+      "last_trade_at": "2027-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Hantavirus pandemic in 2026?",
+        "Will the Iranian regime fall by June 30?",
+        "US obtains Iranian enriched uranium by May 31?",
+        "Will the U.S. invade Iran before 2027?",
+        "US x Iran permanent peace deal by May 31, 2026?"
+      ]
+    },
+    {
+      "wallet": "0x4df332e27f9ee3224f52ce30e3ce15c1075e788f",
+      "trade_count_30d": 37,
+      "trade_count_90d": 126,
+      "pnl_30d_usd": 11428.52,
+      "pnl_90d_usd": 22984.44,
+      "win_rate_30d": 0.811,
+      "win_rate_90d": 0.73,
+      "total_volume_usd": 1894994.23,
+      "last_trade_at": "2026-05-09T00:00:00+00:00",
+      "sample_markets": [
+        "Indian Premier League: Mumbai Indians vs Royal Challengers Bangalore",
+        "Will Hannah Spencer win the Gorton and Denton by-election?",
+        "Spread: Pistons (-2.5)",
+        "Nets vs. Wizards",
+        "Nuggets vs. Timberwolves"
+      ]
+    },
+    {
+      "wallet": "0xd4140031e313f8d850740a80d2ee6653c925a4db",
+      "trade_count_30d": 35,
+      "trade_count_90d": 41,
+      "pnl_30d_usd": 13663.69,
+      "pnl_90d_usd": 14540.16,
+      "win_rate_30d": 0.743,
+      "win_rate_90d": 0.732,
+      "total_volume_usd": 154024.0,
+      "last_trade_at": "2027-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "US x Iran permanent peace deal by May 15, 2026?",
+        "Will the U.S. invade Iran before 2027?",
+        "US x Iran permanent peace deal by May 31, 2026?",
+        "Jerome Powell out as Fed Chair by May 14, 2026?",
+        "US x Iran permanent peace deal by June 30, 2026?"
+      ]
+    },
+    {
+      "wallet": "0x73c5701afdefba2814193168448b2992306b2f80",
+      "trade_count_30d": 5,
+      "trade_count_90d": 5,
+      "pnl_30d_usd": 9937.59,
+      "pnl_90d_usd": 9937.59,
+      "win_rate_30d": 0.4,
+      "win_rate_90d": 0.4,
+      "total_volume_usd": 36736.39,
+      "last_trade_at": "2026-05-10T00:00:00+00:00",
+      "sample_markets": [
+        "Will Arsenal FC win on 2026-05-10?",
+        "Will Paris Saint-Germain FC win on 2026-05-10?",
+        "Will Getafe CF win on 2026-05-10?",
+        "Will Atalanta BC win on 2026-05-10?",
+        "Will Eintracht Frankfurt win on 2026-05-08?"
+      ]
+    },
+    {
+      "wallet": "0xf201a19b43471261a3c1ba9247335d55270e527e",
+      "trade_count_30d": 34,
+      "trade_count_90d": 37,
+      "pnl_30d_usd": 9975.53,
+      "pnl_90d_usd": 9807.05,
+      "win_rate_30d": 0.529,
+      "win_rate_90d": 0.486,
+      "total_volume_usd": 213674.36,
+      "last_trade_at": "2026-05-11T00:00:00+00:00",
+      "sample_markets": [
+        "LoL: GIANTX vs Movistar KOI (BO3) - LEC Regular Season",
+        "LoL: Karmine Corp vs GIANTX (BO3) - LEC Regular Season",
+        "LoL: Cloud9 vs FlyQuest - Game 1 Winner",
+        "LoL: LOUD vs Vivo Keyd Stars (BO3) - CBLOL Regular Season",
+        "LoL: KT Rolster vs BNK FEARX - Game 2 Winner"
+      ]
+    },
+    {
+      "wallet": "0x9ddfa4d5b954379a03d19f87df36b9820b862c83",
+      "trade_count_30d": 25,
+      "trade_count_90d": 27,
+      "pnl_30d_usd": 8144.59,
+      "pnl_90d_usd": 8094.12,
+      "win_rate_30d": 0.56,
+      "win_rate_90d": 0.519,
+      "total_volume_usd": 16847.0,
+      "last_trade_at": "2026-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Will the Iranian regime fall before 2027?",
+        "US x Iran diplomatic meeting by May 31, 2026?",
+        "US x Iran diplomatic meeting by May 31, 2026?",
+        "US x Iran permanent peace deal by May 8, 2026?",
+        "Strait of Hormuz traffic returns to normal by May 15?"
+      ]
+    },
+    {
+      "wallet": "0xdc4b06981e74fe11585438eb40f10bd79f43dbca",
+      "trade_count_30d": 27,
+      "trade_count_90d": 27,
+      "pnl_30d_usd": 5930.17,
+      "pnl_90d_usd": 5930.17,
+      "win_rate_30d": 0.852,
+      "win_rate_90d": 0.852,
+      "total_volume_usd": 242961.04,
+      "last_trade_at": "2027-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Strait of Hormuz traffic returns to normal by May 15?",
+        "US obtains Iranian enriched uranium by May 31?",
+        "Kharg Island no longer under Iranian control by May 31?",
+        "Will Reza Pahlavi enter Iran by June 30?",
+        "Will Reza Pahlavi enter Iran by May 31?"
+      ]
+    },
+    {
+      "wallet": "0xeca0c0888e34df59589c67fbe53dc7f298b5e8f8",
+      "trade_count_30d": 55,
+      "trade_count_90d": 56,
+      "pnl_30d_usd": 3432.4,
+      "pnl_90d_usd": 3432.41,
+      "win_rate_30d": 0.709,
+      "win_rate_90d": 0.714,
+      "total_volume_usd": 50496.2,
+      "last_trade_at": "2028-11-07T00:00:00+00:00",
+      "sample_markets": [
+        "US x Iran permanent peace deal by June 30, 2026?",
+        "Will Anthropic flip BTC by December 31?",
+        "Iran leadership change by December 31?",
+        "Will the U.S. invade Iran before 2027?",
+        "Will the Democratic Party control the Senate after the 2026 Midterm elections?"
+      ]
+    },
+    {
+      "wallet": "0x689c37af05b28153d718757a5b3c1008c4226b1e",
+      "trade_count_30d": 12,
+      "trade_count_90d": 12,
+      "pnl_30d_usd": 2875.96,
+      "pnl_90d_usd": 2875.96,
+      "win_rate_30d": 0.583,
+      "win_rate_90d": 0.583,
+      "total_volume_usd": 1209.41,
+      "last_trade_at": "2026-05-16T00:00:00+00:00",
+      "sample_markets": [
+        "Will Australia be the Jury Winner in the Eurovision 2026 Grand Final?",
+        "Will Manchester United FC win on 2026-05-09?",
+        "Will Manchester City FC win on 2026-05-09?",
+        "Will Como 1907 win on 2026-05-10?",
+        "LoL: Movistar KOI vs G2 Esports (BO3) - LEC Regular Season"
+      ]
+    },
+    {
+      "wallet": "0x4ffe49ba2a4cae123536a8af4fda48faeb609f71",
+      "trade_count_30d": 329,
+      "trade_count_90d": 332,
+      "pnl_30d_usd": 2669.54,
+      "pnl_90d_usd": 2697.65,
+      "win_rate_30d": 0.997,
+      "win_rate_90d": 0.997,
+      "total_volume_usd": 282203.02,
+      "last_trade_at": "2028-11-07T00:00:00+00:00",
+      "sample_markets": [
+        "Will C\u00e9sar Acu\u00f1a win the 2026 Peruvian presidential election?",
+        "Will Jordan win the 2026 FIFA World Cup?",
+        "Will UBS or any of its underwriting affiliates serve as the lead underwriter in ",
+        "Will Eduardo Bolsonaro win the 2026 Brazilian presidential election?",
+        "Will Kim Dong-yeon win the 2026 Gyeonggi Province Gubernatorial Election?"
+      ]
+    },
+    {
+      "wallet": "0x629da223adfc9957329e02de95ae3d263f92756c",
+      "trade_count_30d": 158,
+      "trade_count_90d": 161,
+      "pnl_30d_usd": 2413.69,
+      "pnl_90d_usd": 2269.48,
+      "win_rate_30d": 0.652,
+      "win_rate_90d": 0.646,
+      "total_volume_usd": 143214.24,
+      "last_trade_at": "2026-05-17T00:00:00+00:00",
+      "sample_markets": [
+        "Counter-Strike: Vitality vs Team Falcons (BO3) - IEM Rio Group A",
+        "Pakistan Super League: Hyderabad Kingsmen vs Rawalpindi Pindiz",
+        "Counter-Strike: Legacy vs HOTU (BO3) - IEM Rio Group B",
+        "Indian Premier League: Sunrisers Hyderabad vs Rajasthan Royals",
+        "Valorant: EDward Gaming vs XLG Gaming (BO3) - VCT China Group Omega"
+      ]
+    },
+    {
+      "wallet": "0x783b53f025442490cfb4b54793d81572e7d9dc4c",
+      "trade_count_30d": 71,
+      "trade_count_90d": 71,
+      "pnl_30d_usd": 2043.67,
+      "pnl_90d_usd": 2043.67,
+      "win_rate_30d": 0.648,
+      "win_rate_90d": 0.648,
+      "total_volume_usd": 24171.89,
+      "last_trade_at": "2026-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Will Rory McIlroy win the 2026 Truist Championship?",
+        "Knicks vs. 76ers",
+        "Will the US acquire part of Greenland in 2026?",
+        "Will Cameron Young win the 2026 Truist Championship?",
+        "Internazionali BNL d'Italia: Learner Tien vs Alexander Bublik"
+      ]
+    },
+    {
+      "wallet": "0x469c7f793fa34a154f2d378b2397daa9eb65309b",
+      "trade_count_30d": 83,
+      "trade_count_90d": 84,
+      "pnl_30d_usd": 1935.47,
+      "pnl_90d_usd": 1958.62,
+      "win_rate_30d": 0.771,
+      "win_rate_90d": 0.774,
+      "total_volume_usd": 215154.45,
+      "last_trade_at": "2028-11-07T00:00:00+00:00",
+      "sample_markets": [
+        "Will the Fed increase interest rates by 50+ bps after the July 2026 meeting?",
+        "Will the Fed increase interest rates by 25 bps after the June 2026 meeting?",
+        "Will the Fed decrease interest rates by 50+ bps after the June 2026 meeting?",
+        "Will the Fed decrease interest rates by 50+ bps after the July 2026 meeting?",
+        "Will Red Bull Racing be the 2026 F1 Constructors' Champion?"
+      ]
+    },
+    {
+      "wallet": "0xe9076a87c5ed90ef16e6fe6529c943baeca0cff6",
+      "trade_count_30d": 193,
+      "trade_count_90d": 193,
+      "pnl_30d_usd": 1843.75,
+      "pnl_90d_usd": 1843.75,
+      "win_rate_30d": 0.332,
+      "win_rate_90d": 0.332,
+      "total_volume_usd": 1325284.45,
+      "last_trade_at": "2027-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Will Japan win the 2026 FIFA World Cup?",
+        "Will the Los Angeles Lakers win the 2026 NBA Finals?",
+        "Will South Korea win the 2026 FIFA World Cup?",
+        "Will France win the 2026 FIFA World Cup?",
+        "Will Portugal win the 2026 FIFA World Cup?"
+      ]
+    },
+    {
+      "wallet": "0x048215305cbcf7cc790735bf00119551d75c6b0a",
+      "trade_count_30d": 17,
+      "trade_count_90d": 18,
+      "pnl_30d_usd": 1608.69,
+      "pnl_90d_usd": 1474.47,
+      "win_rate_30d": 0.706,
+      "win_rate_90d": 0.667,
+      "total_volume_usd": 29222.55,
+      "last_trade_at": "2026-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "US x Iran permanent peace deal by May 15, 2026?",
+        "Gemini 3.2 released by May 31, 2026?",
+        "US obtains Iranian enriched uranium by May 31?",
+        "Aliens.gov confirmed immigration website?",
+        "Will Trump visit China by May 31?"
+      ]
+    },
+    {
+      "wallet": "0x8a98109fb0f1d87d9bfcb4486ba3587b95c51b92",
+      "trade_count_30d": 55,
+      "trade_count_90d": 56,
+      "pnl_30d_usd": 1565.61,
+      "pnl_90d_usd": 1562.16,
+      "win_rate_30d": 0.582,
+      "win_rate_90d": 0.571,
+      "total_volume_usd": 52498.28,
+      "last_trade_at": "2026-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Will the Iranian regime fall before 2027?",
+        "Iran agrees to surrender enriched uranium stockpile by December 31, 2026?",
+        "US x Iran diplomatic meeting by May 15, 2026?",
+        "Will Donald Trump announce that the United States blockade of the Strait of Horm",
+        " Iran agrees to end enrichment of uranium by June 30?"
+      ]
+    },
+    {
+      "wallet": "0xf6415fa0aa9cb944c1c4afb9bc53ca82dd797b6f",
+      "trade_count_30d": 25,
+      "trade_count_90d": 25,
+      "pnl_30d_usd": 1224.4,
+      "pnl_90d_usd": 1224.4,
+      "win_rate_30d": 0.56,
+      "win_rate_90d": 0.56,
+      "total_volume_usd": 22778.61,
+      "last_trade_at": "2026-05-16T00:00:00+00:00",
+      "sample_markets": [
+        "Will BV Borussia 09 Dortmund win on 2026-05-03?",
+        "Will Parma Calcio 1913 vs. AS Roma end in a draw?",
+        "New York Yankees vs. Milwaukee Brewers",
+        "Will Hellas Verona FC win on 2026-05-03?",
+        "Will Fulham FC vs. AFC Bournemouth end in a draw?"
+      ]
+    },
+    {
+      "wallet": "0x47138dc1eef25f1ea91f3b2fda0e0f455c634d21",
+      "trade_count_30d": 17,
+      "trade_count_90d": 17,
+      "pnl_30d_usd": 937.54,
+      "pnl_90d_usd": 937.54,
+      "win_rate_30d": 0.706,
+      "win_rate_90d": 0.706,
+      "total_volume_usd": 22592.21,
+      "last_trade_at": "2026-05-11T00:00:00+00:00",
+      "sample_markets": [
+        "LoL: Movistar KOI vs G2 Esports (BO3) - LEC Regular Season",
+        "Dota 2: PlayTime vs Nigma Galaxy (BO3) - 1win Essence Playoffs",
+        "Counter-Strike: Walczaki vs Nemiga (BO3) - BC Game Masters Europe Series #1 Play",
+        "Dota 2: PlayTime vs Nigma Galaxy - Game 1 Winner",
+        "LoL: Cloud9 vs FlyQuest - Game 1 Winner"
+      ]
+    },
+    {
+      "wallet": "0xc98ff9dad68a08a4e5ea0930a5ddbb05db86a13f",
+      "trade_count_30d": 25,
+      "trade_count_90d": 25,
+      "pnl_30d_usd": 743.24,
+      "pnl_90d_usd": 743.24,
+      "win_rate_30d": 0.84,
+      "win_rate_90d": 0.84,
+      "total_volume_usd": 6037.15,
+      "last_trade_at": "2026-05-17T00:00:00+00:00",
+      "sample_markets": [
+        "Trail Blazers vs. Spurs",
+        "Counter-Strike: Vitality vs GamerLegion (BO3) - BLAST Rivals Playoffs",
+        "Counter-Strike: Astralis vs G2 (BO3) - BLAST Rivals Group A",
+        "Internazionali BNL d'Italia: Tommy Paul vs Luciano Darderi",
+        "Will AFC Bournemouth win on 2026-05-09?"
+      ]
+    },
+    {
+      "wallet": "0x0b5a14b1c2f547cfd238b1123d228562f5721457",
+      "trade_count_30d": 21,
+      "trade_count_90d": 21,
+      "pnl_30d_usd": 651.3,
+      "pnl_90d_usd": 651.3,
+      "win_rate_30d": 0.952,
+      "win_rate_90d": 0.952,
+      "total_volume_usd": 6726.21,
+      "last_trade_at": "2026-05-11T00:00:00+00:00",
+      "sample_markets": [
+        "LoL: Movistar KOI vs G2 Esports (BO3) - LEC Regular Season",
+        "LoL: Movistar KOI vs G2 Esports - Game 2 Winner",
+        "LoL: Movistar KOI vs G2 Esports - Game 1 Winner",
+        "LoL: Movistar KOI vs G2 Esports - Game 2 Winner",
+        "LoL: Fnatic vs Natus Vincere (BO3) - LEC Regular Season"
+      ]
+    },
+    {
+      "wallet": "0x7a5d94f83ff0195387eaf9f4463433d03eda54db",
+      "trade_count_30d": 71,
+      "trade_count_90d": 71,
+      "pnl_30d_usd": 642.74,
+      "pnl_90d_usd": 642.74,
+      "win_rate_30d": 0.563,
+      "win_rate_90d": 0.563,
+      "total_volume_usd": 45190.22,
+      "last_trade_at": "2026-05-17T00:00:00+00:00",
+      "sample_markets": [
+        "Will Cameron Young win the 2026 Truist Championship?",
+        "Will Cameron Young win the 2026 Truist Championship?",
+        "UFC 328: Roman Kopylov vs. Marco Tulio (Middleweight, Early Prelims)",
+        "UFC 328: Tatsuro Taira vs. Joshua Van (Flyweight, Main Card)",
+        "UFC 328: Pat Sabatini vs. William Gomis (Featherweight, Early Prelims)"
+      ]
+    },
+    {
+      "wallet": "0x3e6aee1898c37494b2cdb06da1f43c10b16ae86d",
+      "trade_count_30d": 236,
+      "trade_count_90d": 236,
+      "pnl_30d_usd": 488.39,
+      "pnl_90d_usd": 488.39,
+      "win_rate_30d": 0.869,
+      "win_rate_90d": 0.869,
+      "total_volume_usd": 42401.11,
+      "last_trade_at": "2028-11-07T00:00:00+00:00",
+      "sample_markets": [
+        "Will the Fed decrease interest rates by 50+ bps after the June 2026 meeting?",
+        "Will the Fed increase interest rates by 25 bps after the June 2026 meeting?",
+        "Will the Los Angeles Lakers win the 2026 NBA Finals?",
+        "Will Elon Musk win the Nobel Peace Prize in 2026?",
+        "Will the Cleveland Cavaliers win the 2026 NBA Finals?"
+      ]
+    },
+    {
+      "wallet": "0xca1f9b9d67d947c8007d9814e8f9d6045cccd282",
+      "trade_count_30d": 52,
+      "trade_count_90d": 52,
+      "pnl_30d_usd": 490.31,
+      "pnl_90d_usd": 490.31,
+      "win_rate_30d": 0.827,
+      "win_rate_90d": 0.827,
+      "total_volume_usd": 6212.67,
+      "last_trade_at": "2027-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "Will Carlos \u00c1lvarez win the 2026 Peruvian presidential election?",
+        "Will Ricardo Belmont win the 2026 Peruvian presidential election?",
+        "US x Iran permanent peace deal by May 31, 2026?",
+        "Will Ricardo Belmont finish in second place in the first round of the 2026 Peruv",
+        "Will the U.S. invade Iran before 2027?"
+      ]
+    },
+    {
+      "wallet": "0xddb6e6246546230503f153506ac1e9914978b9b3",
+      "trade_count_30d": 43,
+      "trade_count_90d": 43,
+      "pnl_30d_usd": 484.19,
+      "pnl_90d_usd": 484.19,
+      "win_rate_30d": 0.674,
+      "win_rate_90d": 0.674,
+      "total_volume_usd": 20751.83,
+      "last_trade_at": "2026-05-17T00:00:00+00:00",
+      "sample_markets": [
+        "Counter-Strike: MOUZ vs G2 (BO3) - PGL Astana Group Stage",
+        "LoL: Disguised vs Dignitas (BO3) - LCS Regular Season",
+        "Will Arsenal FC win on 2026-04-29?",
+        "Guangdong Southern Tigers vs. Beijing Ducks",
+        "LoL: Kiwoom DRX vs Hanwha Life Esports (BO3) - LCK Rounds 1-2"
+      ]
+    },
+    {
+      "wallet": "0x54498e4c40b17261479aeaeeddf9cc37bd46992b",
+      "trade_count_30d": 100,
+      "trade_count_90d": 105,
+      "pnl_30d_usd": 465.91,
+      "pnl_90d_usd": 443.42,
+      "win_rate_30d": 0.63,
+      "win_rate_90d": 0.619,
+      "total_volume_usd": 17458.71,
+      "last_trade_at": "2028-11-07T00:00:00+00:00",
+      "sample_markets": [
+        "Will 40 ships transit the Strait of Hormuz on any day by April 30?",
+        "Hantavirus pandemic in 2026?",
+        "US x Iran permanent peace deal by June 30, 2026?",
+        "US x Iran permanent peace deal by May 15, 2026?",
+        "Strait of Hormuz traffic returns to normal by May 15?"
+      ]
+    },
+    {
+      "wallet": "0xd7f9d0ef6cabe0f2419827effca57463f5aa29a9",
+      "trade_count_30d": 131,
+      "trade_count_90d": 131,
+      "pnl_30d_usd": 288.28,
+      "pnl_90d_usd": 288.28,
+      "win_rate_30d": 0.611,
+      "win_rate_90d": 0.611,
+      "total_volume_usd": 8636.8,
+      "last_trade_at": "2026-05-17T00:00:00+00:00",
+      "sample_markets": [
+        "Will Arsenal FC win on 2026-05-10?",
+        "Madrid Open: Flavio Cobolli vs Alexander Zverev",
+        "Will FC Barcelona win on 2026-05-10?",
+        "Will Real Madrid CF win on 2026-05-03?",
+        "Will Brentford FC win on 2026-05-02?"
+      ]
+    },
+    {
+      "wallet": "0xe9b72cca6799bd2dd75087ba52d959cd4f4e8030",
+      "trade_count_30d": 67,
+      "trade_count_90d": 90,
+      "pnl_30d_usd": 309.63,
+      "pnl_90d_usd": 225.54,
+      "win_rate_30d": 0.284,
+      "win_rate_90d": 0.322,
+      "total_volume_usd": 17912.34,
+      "last_trade_at": "2028-11-07T00:00:00+00:00",
+      "sample_markets": [
+        "Will Alex Vanopslagh be the next prime minister of Denmark after the 2026 parlia",
+        "Will the highest temperature in London be 23\u00b0C on May 3?",
+        "Will the price of Bitcoin be above $64,000 on April 6?",
+        "Will the highest temperature in Miami be between 88-89\u00b0F on May 3?",
+        "Knicks vs. 76ers"
+      ]
+    },
+    {
+      "wallet": "0x66c62566753c2aac6814e77f067ef3f1400cb9f8",
+      "trade_count_30d": 39,
+      "trade_count_90d": 41,
+      "pnl_30d_usd": 253.27,
+      "pnl_90d_usd": 244.76,
+      "win_rate_30d": 0.718,
+      "win_rate_90d": 0.707,
+      "total_volume_usd": 7817.35,
+      "last_trade_at": "2026-12-31T00:00:00+00:00",
+      "sample_markets": [
+        "US obtains Iranian enriched uranium by May 31?",
+        "Will the Iranian regime fall by June 30?",
+        "Strait of Hormuz traffic returns to normal by end of April?",
+        "Will Roberto S\u00e1nchez Palomino win the 2026 Peruvian presidential election?",
+        "US x Iran permanent peace deal by May 31, 2026?"
+      ]
+    },
+    {
+      "wallet": "0x9cc0111cf134ac9bfd752501bab786171dcb7faa",
+      "trade_count_30d": 28,
+      "trade_count_90d": 28,
+      "pnl_30d_usd": 228.37,
+      "pnl_90d_usd": 228.37,
+      "win_rate_30d": 0.107,
+      "win_rate_90d": 0.107,
+      "total_volume_usd": 345.7,
+      "last_trade_at": "2026-05-12T00:00:00+00:00",
+      "sample_markets": [
+        "Atlanta Braves vs. Seattle Mariners",
+        "Bitcoin Up or Down - April 22, 3:55PM-4:00PM ET",
+        "Bitcoin Up or Down - April 21, 4:50PM-4:55PM ET",
+        "Bitcoin Up or Down - April 16, 12:45PM-12:50PM ET",
+        "Bitcoin Up or Down - April 16, 12:30PM-12:35PM ET"
+      ]
+    },
+    {
+      "wallet": "0x6b678058621e7fe2ec3fb888f39c92fd740b829f",
+      "trade_count_30d": 14,
+      "trade_count_90d": 14,
+      "pnl_30d_usd": 174.94,
+      "pnl_90d_usd": 174.94,
+      "win_rate_30d": 0.786,
+      "win_rate_90d": 0.786,
+      "total_volume_usd": 1250.34,
+      "last_trade_at": "2026-05-10T00:00:00+00:00",
+      "sample_markets": [
+        "Will Galatasaray SK win on 2026-05-09?",
+        "Will Hellas Verona FC win on 2026-05-10?",
+        "Will US Cremonese win on 2026-05-10?",
+        "Will CA Hurac\u00e1n win on 2026-05-09?",
+        "Will Fulham FC win on 2026-05-09?"
+      ]
+    },
+    {
+      "wallet": "0x5297f1e1d0f0584537af763652a0a5f874037b99",
+      "trade_count_30d": 11,
+      "trade_count_90d": 11,
+      "pnl_30d_usd": 138.94,
+      "pnl_90d_usd": 138.94,
+      "win_rate_30d": 0.636,
+      "win_rate_90d": 0.636,
+      "total_volume_usd": 159758.71,
+      "last_trade_at": "2026-05-31T00:00:00+00:00",
+      "sample_markets": [
+        "US x Iran permanent peace deal by May 11, 2026?",
+        "Strait of Hormuz traffic returns to normal by May 15?",
+        "US x Iran permanent peace deal by May 13, 2026?",
+        "US x Iran diplomatic meeting by May 31, 2026?",
+        "US x Iran diplomatic meeting by May 15, 2026?"
+      ]
+    },
+    {
+      "wallet": "0x22b81124dc1534681ac5b8916c363fb681638b13",
+      "trade_count_30d": 91,
+      "trade_count_90d": 96,
+      "pnl_30d_usd": 80.95,
+      "pnl_90d_usd": 231.35,
+      "win_rate_30d": 0.462,
+      "win_rate_90d": 0.49,
+      "total_volume_usd": 19275.8,
+      "last_trade_at": "2026-05-31T00:00:00+00:00",
+      "sample_markets": [
+        "Will Elon Musk post 1440-1479 tweets in April 2026?",
+        "Will the highest temperature in Hong Kong be 23\u00b0C on April 24?",
+        "LoL: Fnatic vs G2 Esports (BO3) - LEC Regular Season",
+        "Will the highest temperature in Hong Kong be 24\u00b0C on April 24?",
+        "Will the highest temperature in Los Angeles be between 68-69\u00b0F on May 5?"
+      ]
+    }
+  ]
+}

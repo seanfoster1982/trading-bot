@@ -1,0 +1,6 @@
+# Watchlist - one Solana mint address per line
+# Optional comment after # on each line
+# These tokens are evaluated by the strategy regardless of screen filters
+
+6veQU7HDdXV5DC2Eqhnri5q71gkMzG73qKkSSudnpump   # DUST - manually added 2026-05-15
+6qdzMx4c9rL2X3Ns3SwZ8uEo4zReDPjdXpAEmpo7pump   # BABYTROLL - manually added 2026-05-15
