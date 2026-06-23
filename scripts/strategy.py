@@ -431,6 +431,8 @@ def evaluate_token(address: str, symbol: str, screen: str) -> Signal:
     atr = ind["atr_14"]
     macro = get_macro_score()
     stop_loss = compute_stop_loss(entry_price, atr)
+    if atr is None or atr <= 0:
+        reasoning.append("STOP_FALLBACK_5PCT: ATR_14 missing or <=0; stop placed at -5% fixed (not ATR-sized)")
     position_size = compute_position_size(strategy, macro, atr, entry_price)
 
     # Take profit: 2x risk (R/R = 2)

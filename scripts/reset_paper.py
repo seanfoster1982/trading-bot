@@ -23,8 +23,21 @@ print(f"About to clear: {n_trades} paper trades ({n_closed} closed, realized P&L
 #    signals, rug_reports, whale_signals, macro_regime, token_metadata intact.
 conn.execute("DELETE FROM paper_trades")
 
-# 4. Also reset the 'executed' flag on signals so the paper trader sees a clean slate
-#    (signals stay as historical record, but none are marked as having open trades)
+# 4. Consume every existing BUY signal so the paper trader will not pick it up
+#    after the reset. paper_trader.get_unfilled_buy_signals filters
+#    WHERE s.action = 'BUY' AND no linked paper_trade; flipping action from
+#    'BUY' to 'CONSUMED' excludes these rows from that query. Only NEW signals
+#    that strategy.py writes after this reset (which will have action='BUY')
+#    will produce new paper trades. This fixes the stale-signal replay bug:
+#    previously, deleting paper_trades left every historical BUY signal as
+#    "unfilled", so paper_trader would re-execute 7-9 day old signals against
+#    current prices and record fictional -93% losses on tokens that had since
+#    rugged (e.g. WCOR was replayed three times this way).
+consumed_count = conn.execute(
+    "UPDATE signals SET action = 'CONSUMED' WHERE action = 'BUY'"
+).rowcount
+print(f"Marked {consumed_count} historical BUY signals as CONSUMED (stale-signal fix)")
+
 conn.commit()
 
 # 5. Verify
