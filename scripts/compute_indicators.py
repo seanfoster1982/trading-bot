@@ -25,11 +25,16 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from whale_config import WHALE_ONLY, ACTIVE_SCREEN  # noqa: E402
+
 DB_PATH = Path("data/memecoins.db")
 
 # Minimum candles required to compute indicators reliably
 # (we need at least 200 for EMA 200 to mean anything)
 MIN_CANDLES = 200
+
+# Only compute for tokens screened within this window (matches ingest/strategy).
+SCREEN_LOOKBACK_SEC = 24 * 3600
 
 
 def init_indicators_db() -> None:
@@ -185,9 +190,26 @@ def compute_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def save_indicators(address: str, symbol: str, interval: str, df: pd.DataFrame) -> int:
-    """Bulk insert indicator rows. Returns count inserted."""
+    """Bulk insert indicator rows. Returns count inserted.
+
+    Only writes rows newer than the latest stored indicator for this
+    (address, interval) — historical rows never change, so rewriting them
+    every cycle just burns time.
+    """
     # Drop rows where the slowest indicator (EMA 200) is still NaN
     df_valid = df.dropna(subset=["ema_200"]).copy()
+    if df_valid.empty:
+        return 0
+
+    conn = sqlite3.connect(DB_PATH)
+    last_row = conn.execute("""
+        SELECT MAX(timestamp) FROM indicators
+        WHERE address = ? AND interval = ?
+    """, (address, interval)).fetchone()
+    conn.close()
+    last_ts = last_row[0] if last_row and last_row[0] is not None else -1
+    # Rewrite the last stored candle too, in case it was partial when computed.
+    df_valid = df_valid[df_valid["timestamp"] >= last_ts]
     if df_valid.empty:
         return 0
 
@@ -227,16 +249,45 @@ def save_indicators(address: str, symbol: str, interval: str, df: pd.DataFrame) 
 
 
 def get_token_intervals() -> list[tuple[str, str, str]]:
-    """Return [(symbol, address, interval), ...] for every token-interval with candles."""
+    """Return [(symbol, address, interval), ...] for token-intervals that need
+    computing.
+
+    Two filters keep this fast enough to never hit the pipeline timeout:
+      1. Only tokens screened in the last 24h (whale_target only in whale-only
+         mode) — not every token ever ingested.
+      2. Skip token-intervals whose indicators already cover the latest candle
+         (nothing new to compute).
+    """
     conn = sqlite3.connect(DB_PATH)
-    rows = conn.execute("""
-        SELECT symbol, address, interval, COUNT(*) as candle_count
-        FROM candles
-        GROUP BY address, interval
-        HAVING candle_count >= ?
-    """, (MIN_CANDLES,)).fetchall()
+    cutoff = int(time.time()) - SCREEN_LOOKBACK_SEC
+    screen_filter = "AND s.screen = ?" if WHALE_ONLY else ""
+    params: tuple = (cutoff, ACTIVE_SCREEN, MIN_CANDLES) if WHALE_ONLY else (cutoff, MIN_CANDLES)
+    rows = conn.execute(f"""
+        SELECT c.symbol, c.address, c.interval,
+               MAX(c.timestamp) as last_candle_ts
+        FROM candles c
+        WHERE c.address IN (
+            SELECT DISTINCT s.address FROM screened_tokens s
+            WHERE s.screened_at >= ? {screen_filter}
+            UNION
+            SELECT address FROM paper_trades WHERE closed_at IS NULL
+        )
+        GROUP BY c.address, c.interval
+        HAVING COUNT(*) >= ?
+    """, params).fetchall()
+
+    # Skip already-current token-intervals.
+    todo = []
+    for sym, addr, interval, last_candle_ts in rows:
+        ind_row = conn.execute("""
+            SELECT MAX(timestamp) FROM indicators
+            WHERE address = ? AND interval = ?
+        """, (addr, interval)).fetchone()
+        last_ind_ts = ind_row[0] if ind_row and ind_row[0] is not None else -1
+        if last_ind_ts < last_candle_ts:
+            todo.append((sym, addr, interval))
     conn.close()
-    return [(r[0], r[1], r[2]) for r in rows]
+    return todo
 
 
 def main_run(only_symbol: str | None):
@@ -249,8 +300,7 @@ def main_run(only_symbol: str | None):
         targets = [(s, a, i) for s, a, i in targets if s.upper() == only_symbol.upper()]
 
     if not targets:
-        console.print("[yellow]No token-intervals with sufficient candles found.[/yellow]")
-        console.print(f"  (Need at least {MIN_CANDLES} candles per interval)")
+        console.print("[green]All indicators already up to date (or no tokens with sufficient candles).[/green]")
         return
 
     console.print(f"Computing indicators for {len(targets)} token-interval combinations\n")

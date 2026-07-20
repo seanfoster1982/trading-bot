@@ -25,6 +25,8 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from whale_config import WHALE_ONLY, SCREEN_TOKEN_LIMIT, WHALE_TOP_TRADER_DEPTH  # noqa: E402
+
 load_dotenv()
 
 BIRDEYE_BASE = "https://public-api.birdeye.so"
@@ -393,48 +395,55 @@ def print_screen_table(console: Console, name: str, tokens: list[ScreenedToken])
     console.print(table)
 
 
-async def main_async(*, run_whale_pass: bool, top_n_for_whales: int):
+async def main_async(*, run_whale_pass: bool, top_n_for_whales: int, whale_only: bool):
     init_db()
     if not BIRDEYE_KEY:
         Console().print("[red]BIRDEYE_API_KEY not set in .env[/red]")
         return
 
     console = Console()
-    console.print("[bold]Memecoin Screener — running 3 screens[/bold]\n")
+    if whale_only:
+        console.print("[bold]Whale Copy Screener — Screen B only[/bold]\n")
+    else:
+        console.print("[bold]Memecoin Screener — running 3 screens[/bold]\n")
 
     async with httpx.AsyncClient() as client:
-        # Screen A: Momentum candidates
-        console.print("[cyan]Screen A — Momentum candidates...[/cyan]")
-        # Run Screen A with 3 sorts (volume, liquidity, mcap) and merge
-        a_tokens_all = []
-        a_err = None
-        for cfg in [SCREEN_A_MOMENTUM, SCREEN_A_BY_LIQUIDITY, SCREEN_A_BY_MCAP]:
-            toks, err = await fetch_token_list_v3(client, cfg)
-            if err:
-                a_err = err
-            a_tokens_all.extend(toks or [])
-        # Dedupe by address, keeping first occurrence
-        seen = set()
-        a_tokens = []
-        for t in a_tokens_all:
-            if t.address not in seen:
-                seen.add(t.address)
-                a_tokens.append(t)
-        if a_err:
-            console.print(f"  [red]ERROR: {a_err}[/red]")
-        else:
-            saved = save_screened(a_tokens, "momentum")
-            console.print(f"  Found {len(a_tokens)} tokens, saved {saved}")
-            print_screen_table(console, "A (Momentum)", a_tokens)
+        b_tokens: list[ScreenedToken] = []
 
-        await asyncio.sleep(0.5)
+        if not whale_only:
+            # Screen A: Momentum candidates
+            console.print("[cyan]Screen A — Momentum candidates...[/cyan]")
+            a_tokens_all = []
+            a_err = None
+            for cfg in [SCREEN_A_MOMENTUM, SCREEN_A_BY_LIQUIDITY, SCREEN_A_BY_MCAP]:
+                toks, err = await fetch_token_list_v3(client, cfg)
+                if err:
+                    a_err = err
+                a_tokens_all.extend(toks or [])
+            seen = set()
+            a_tokens = []
+            for t in a_tokens_all:
+                if t.address not in seen:
+                    seen.add(t.address)
+                    a_tokens.append(t)
+            if a_err:
+                console.print(f"  [red]ERROR: {a_err}[/red]")
+            else:
+                saved = save_screened(a_tokens, "momentum")
+                console.print(f"  Found {len(a_tokens)} tokens, saved {saved}")
+                print_screen_table(console, "A (Momentum)", a_tokens)
+            await asyncio.sleep(0.5)
 
-        # Screen B: Whale target candidates (broader filter; whale signals come from per-token traders pass)
-        console.print("\n[cyan]Screen B — Whale target candidates...[/cyan]")
+        # Screen B: Whale target candidates
+        console.print("\n[cyan]Screen B — Whale target candidates...[/cyan]" if not whale_only
+                      else "[cyan]Screen B — Whale target candidates...[/cyan]")
         # Run Screen B with 3 sorts and merge
+        b_configs = [SCREEN_B_WHALE, SCREEN_B_BY_LIQUIDITY, SCREEN_B_BY_MCAP]
+        if whale_only:
+            b_configs = [dict(c, limit=SCREEN_TOKEN_LIMIT) for c in b_configs]
         b_tokens_all = []
         b_err = None
-        for cfg in [SCREEN_B_WHALE, SCREEN_B_BY_LIQUIDITY, SCREEN_B_BY_MCAP]:
+        for cfg in b_configs:
             toks, err = await fetch_token_list_v3(client, cfg)
             if err:
                 b_err = err
@@ -454,28 +463,28 @@ async def main_async(*, run_whale_pass: bool, top_n_for_whales: int):
 
         await asyncio.sleep(0.5)
 
-        # Screen C: Lottery candidates
-        console.print("\n[cyan]Screen C — Lottery (new low-cap)...[/cyan]")
-        # Run Screen C with 3 sorts (volume, liquidity, 24h pumpers) and merge
-        c_tokens_all = []
-        c_err = None
-        for cfg in [SCREEN_C_LOTTERY, SCREEN_C_BY_LIQUIDITY, SCREEN_C_BY_24H_CHANGE]:
-            toks, err = await fetch_token_list_v3(client, cfg)
-            if err:
-                c_err = err
-            c_tokens_all.extend(toks or [])
-        seen = set()
-        c_tokens = []
-        for t in c_tokens_all:
-            if t.address not in seen:
-                seen.add(t.address)
-                c_tokens.append(t)
-        if c_err:
-            console.print(f"  [red]ERROR: {c_err}[/red]")
-        else:
-            saved = save_screened(c_tokens, "lottery")
-            console.print(f"  Found {len(c_tokens)} tokens, saved {saved}")
-            print_screen_table(console, "C (Lottery)", c_tokens)
+        # Screen C: Lottery candidates (skipped in whale-only mode)
+        if not whale_only:
+            console.print("\n[cyan]Screen C — Lottery (new low-cap)...[/cyan]")
+            c_tokens_all = []
+            c_err = None
+            for cfg in [SCREEN_C_LOTTERY, SCREEN_C_BY_LIQUIDITY, SCREEN_C_BY_24H_CHANGE]:
+                toks, err = await fetch_token_list_v3(client, cfg)
+                if err:
+                    c_err = err
+                c_tokens_all.extend(toks or [])
+            seen = set()
+            c_tokens = []
+            for t in c_tokens_all:
+                if t.address not in seen:
+                    seen.add(t.address)
+                    c_tokens.append(t)
+            if c_err:
+                console.print(f"  [red]ERROR: {c_err}[/red]")
+            else:
+                saved = save_screened(c_tokens, "lottery")
+                console.print(f"  Found {len(c_tokens)} tokens, saved {saved}")
+                print_screen_table(console, "C (Lottery)", c_tokens)
 
         # Whale signal pass — check Top Traders for top N Screen B tokens
         if run_whale_pass and b_tokens:
@@ -501,12 +510,17 @@ async def main_async(*, run_whale_pass: bool, top_n_for_whales: int):
 
 @click.command()
 @click.option("--skip-whales", is_flag=True, help="Skip the Top Traders pass (saves CUs).")
-@click.option("--whale-depth", type=int, default=15,
+@click.option("--whale-depth", type=int, default=None,
               help="How many Screen B tokens to check Top Traders for.")
-def main(skip_whales, whale_depth):
+@click.option("--whale-only", is_flag=True, default=None,
+              help="Run Screen B only (whale copy product mode).")
+def main(skip_whales, whale_depth, whale_only):
+    depth = whale_depth if whale_depth is not None else WHALE_TOP_TRADER_DEPTH
+    only = whale_only if whale_only is not None else WHALE_ONLY
     asyncio.run(main_async(
         run_whale_pass=not skip_whales,
-        top_n_for_whales=whale_depth,
+        top_n_for_whales=depth,
+        whale_only=only,
     ))
 
 

@@ -99,7 +99,7 @@ def _seed_signal(
     *,
     symbol: str = "TEST",
     address: str = "addr-test",
-    strategy: str = "momentum",
+    strategy: str = "whale_copy",
     entry_price: float = 1.00,
     stop_loss: float = 0.95,
     take_profit: float | None = 1.10,
@@ -324,16 +324,15 @@ def test_no_current_price_skips_without_writing(tmp_db):
 
 
 def test_max_positions_cap_blocks_new_open(tmp_db):
-    """ALLOCATION['momentum']['max_positions'] == 3. With 3 open momentum
-    trades already, a fresh momentum signal must be refused and no new
-    paper_trades row written."""
-    assert paper_trader.ALLOCATION["momentum"]["max_positions"] == 3, (
-        "Test assumes momentum cap is 3; update if ALLOCATION changes."
+    """ALLOCATION['whale_copy']['max_positions'] == 4. With 4 open whale_copy
+    trades already, a fresh whale_copy signal must be refused."""
+    assert paper_trader.ALLOCATION["whale_copy"]["max_positions"] == 4, (
+        "Test assumes whale_copy cap is 4; update if ALLOCATION changes."
     )
 
-    for i in range(3):
+    for i in range(4):
         _seed_open_position(
-            tmp_db, strategy="momentum", symbol=f"PREV{i}",
+            tmp_db, strategy="whale_copy", symbol=f"PREV{i}",
             address=f"addr-prev-{i}",
         )
 
@@ -341,7 +340,7 @@ def test_max_positions_cap_blocks_new_open(tmp_db):
         tmp_db,
         symbol="NEW",
         address="addr-new",
-        strategy="momentum",
+        strategy="whale_copy",
         position_size_usd=10.0,
         generated_at=int(time.time()) - 60,
     )
@@ -368,7 +367,7 @@ def test_capital_cap_still_fires(tmp_db):
     _seed_signal(
         tmp_db,
         address="addr-bigtrade",
-        strategy="momentum",
+        strategy="whale_copy",
         position_size_usd=200.0,  # > $100 available capital
         generated_at=int(time.time()) - 60,
     )

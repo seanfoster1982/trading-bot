@@ -16,7 +16,10 @@ from typing import Optional
 import httpx
 from dotenv import load_dotenv
 
-load_dotenv(dotenv_path=Path('.env'))
+# Resolve .env relative to the repo root (this file's grandparent), not the
+# current working directory. The scheduled task launches from System32, so a
+# bare Path('.env') would silently fail to load the Telegram credentials.
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env')
 
 _TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 _CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')

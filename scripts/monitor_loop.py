@@ -28,22 +28,30 @@ _sys.path.insert(0, str(_Path(__file__).resolve().parent.parent))
 from scripts.telegram_notifier import send as tg_send, is_configured as tg_configured
 from pathlib import Path
 
+# Whale product config (screener args, interval docs)
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from whale_config import WHALE_ONLY, SCREENER_ARGS, PIPELINE_INTERVAL_MINUTES  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / 'data' / 'memecoins.db'
 LOG_PATH = ROOT / 'data' / 'overnight.log'
 ALERT_PATH = ROOT / 'data' / 'alerts.log'
 
-# Pipeline order — same as the manual sequence
+# Pipeline order — same as the manual sequence.
+# Each entry is (script_name, extra_cli_args).
 PIPELINE = [
-    'screen_memecoins.py',
-    'watchlist.py',
-    'rug_check.py',
-    'ingest_ohlcv.py',
-    'compute_indicators.py',
-    'whale_risk.py',
-    'macro_regime.py',
-    'strategy.py',
-    'paper_trader.py',
+    ('screen_memecoins.py', SCREENER_ARGS if WHALE_ONLY else []),
+    ('watchlist.py', []),
+    ('rug_check.py', []),
+    ('ingest_ohlcv.py', []),
+    ('compute_indicators.py', []),
+    ('whale_risk.py', []),
+    ('macro_regime.py', []),
+    ('strategy.py', []),
+    ('paper_trader.py', []),
+    # Separate analysis — shadow-follows top-PnL wallets. Writes only to its
+    # own tables, never to signals/paper_trades.
+    ('whale_trace.py', []),
 ]
 
 
@@ -57,12 +65,13 @@ def append_log(path: Path, line: str) -> None:
         f.write(line + '\n')
 
 
-def run_script(script_name: str, timeout_sec: int = 600) -> tuple[bool, str]:
+def run_script(script_name: str, extra_args: list[str] | None = None, timeout_sec: int = 600) -> tuple[bool, str]:
     """Run a pipeline script. Returns (success, last_line_of_output)."""
     script_path = ROOT / 'scripts' / script_name
+    cmd = [sys.executable, str(script_path)] + (extra_args or [])
     try:
         result = subprocess.run(
-            [sys.executable, str(script_path)],
+            cmd,
             cwd=str(ROOT),
             capture_output=True,
             text=True,
@@ -150,8 +159,8 @@ def run_pipeline_once(prev_end_ts: int) -> dict:
     results = {}
     errors = []
 
-    for script in PIPELINE:
-        ok, msg = run_script(script)
+    for script, extra_args in PIPELINE:
+        ok, msg = run_script(script, extra_args)
         results[script] = {'ok': ok, 'msg': msg}
         if not ok:
             errors.append(f'{script}: {msg}')
@@ -230,11 +239,13 @@ def main():
     interval_sec = args.interval * 60
 
     print(f'[{ts()}] Monitor loop starting. Interval: {args.interval} min.')
+    if WHALE_ONLY:
+        print(f'[{ts()}] Mode: WHALE COPY ONLY (recommended interval: {PIPELINE_INTERVAL_MINUTES} min)')
     print(f'[{ts()}] Logs: {LOG_PATH} and {ALERT_PATH}')
     print(f'[{ts()}] Press Ctrl+C to stop.')
     print()
 
-    append_log(LOG_PATH, f'{ts()} | MONITOR_STARTED | interval={args.interval}min')
+    append_log(LOG_PATH, f'{ts()} | MONITOR_STARTED | interval={args.interval}min | whale_only={WHALE_ONLY}')
     prev_end_ts = int(time.time()) - 60  # look back 1 min on first run
 
     try:

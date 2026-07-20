@@ -29,15 +29,11 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from whale_config import WHALE_ONLY, ACTIVE_SCREEN, ALLOCATION, TOTAL_CAPITAL_USD  # noqa: E402
+
 DB_PATH = Path("data/memecoins.db")
 
-# Capital allocation
-TOTAL_CAPITAL_USD = 100.0
-ALLOCATION = {
-    "momentum":  {"pct": 0.70, "max_positions": 3, "per_position_usd": 23.0},
-    "whale_copy": {"pct": 0.20, "max_positions": 2, "per_position_usd": 10.0},
-    "lottery":   {"pct": 0.10, "max_positions": 5, "per_position_usd": 2.0},
-}
+# Capital allocation — see whale_config.py (whale_copy-only in production mode).
 
 # Risk gates
 MAX_RUG_SCORE = 25
@@ -100,14 +96,25 @@ def get_tradeable_universe() -> list[tuple[str, str, str]]:
     """
     conn = sqlite3.connect(DB_PATH)
     cutoff = int(time.time()) - (24 * 3600)
-    rows = conn.execute("""
-        SELECT DISTINCT s.symbol, s.address, s.screen
-        FROM screened_tokens s
-        INNER JOIN rug_reports r ON s.address = r.address
-        WHERE s.screened_at >= ?
-          AND r.rug_score < ?
-          AND r.freeze_authority_active = 0
-    """, (cutoff, MAX_RUG_SCORE)).fetchall()
+    if WHALE_ONLY:
+        rows = conn.execute("""
+            SELECT DISTINCT s.symbol, s.address, s.screen
+            FROM screened_tokens s
+            INNER JOIN rug_reports r ON s.address = r.address
+            WHERE s.screened_at >= ?
+              AND s.screen = ?
+              AND r.rug_score < ?
+              AND r.freeze_authority_active = 0
+        """, (cutoff, ACTIVE_SCREEN, MAX_RUG_SCORE)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT DISTINCT s.symbol, s.address, s.screen
+            FROM screened_tokens s
+            INNER JOIN rug_reports r ON s.address = r.address
+            WHERE s.screened_at >= ?
+              AND r.rug_score < ?
+              AND r.freeze_authority_active = 0
+        """, (cutoff, MAX_RUG_SCORE)).fetchall()
     conn.close()
     return rows
 
@@ -486,7 +493,10 @@ def run_strategy(console: Console, verbose: bool):
             seen.add(addr)
             deduped.append((sym, addr, screen))
 
-    console.print(f"[bold]Strategy evaluation: {len(deduped)} tokens[/bold]\n")
+    console.print(f"[bold]Strategy evaluation: {len(deduped)} tokens[/bold]")
+    if WHALE_ONLY:
+        console.print(f"[dim]Whale-only mode: screen={ACTIVE_SCREEN}[/dim]")
+    console.print()
 
     actionable: list[Signal] = []
     blocked: list[Signal] = []

@@ -27,6 +27,8 @@ from rich.table import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from whale_config import WHALE_ONLY, ACTIVE_SCREEN  # noqa: E402
+
 load_dotenv()
 
 BIRDEYE_BASE = "https://public-api.birdeye.so"
@@ -112,14 +114,37 @@ def get_tradeable_tokens() -> list[tuple[str, str, str]]:
     """
     conn = sqlite3.connect(DB_PATH)
     cutoff = int(time.time()) - (24 * 3600)
-    rows = conn.execute("""
-        SELECT DISTINCT s.symbol, s.address, s.screen
-        FROM screened_tokens s
-        INNER JOIN rug_reports r ON s.address = r.address
-        WHERE s.screened_at >= ?
-          AND r.rug_score < ?
-          AND r.freeze_authority_active = 0
-    """, (cutoff, MAX_RUG_SCORE)).fetchall()
+    if WHALE_ONLY:
+        rows = conn.execute("""
+            SELECT DISTINCT s.symbol, s.address, s.screen
+            FROM screened_tokens s
+            INNER JOIN rug_reports r ON s.address = r.address
+            WHERE s.screened_at >= ?
+              AND s.screen = ?
+              AND r.rug_score < ?
+              AND r.freeze_authority_active = 0
+        """, (cutoff, ACTIVE_SCREEN, MAX_RUG_SCORE)).fetchall()
+    else:
+        rows = conn.execute("""
+            SELECT DISTINCT s.symbol, s.address, s.screen
+            FROM screened_tokens s
+            INNER JOIN rug_reports r ON s.address = r.address
+            WHERE s.screened_at >= ?
+              AND r.rug_score < ?
+              AND r.freeze_authority_active = 0
+        """, (cutoff, MAX_RUG_SCORE)).fetchall()
+
+    # Always keep ingesting tokens with open paper positions, even if they
+    # dropped off the screen — exit checks need fresh prices.
+    seen = {r[1] for r in rows}
+    open_pos = conn.execute("""
+        SELECT DISTINCT symbol, address FROM paper_trades
+        WHERE closed_at IS NULL
+    """).fetchall()
+    rows = list(rows)
+    for sym, addr in open_pos:
+        if addr not in seen:
+            rows.append((sym, addr, "open_position"))
     conn.close()
     return rows
 
