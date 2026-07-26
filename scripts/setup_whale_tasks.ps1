@@ -1,20 +1,27 @@
-# Register Windows scheduled tasks for the Whale Copy Bot product.
+# Register Windows scheduled tasks for the Whale Trace product.
 # Run once:
 #   powershell -ExecutionPolicy Bypass -File scripts\setup_whale_tasks.ps1
+#
+# Whale Trace is now the primary strategy. The old screener/indicator pipeline
+# (TradingBotMonitor) is retired — it only fed the whale_copy strategy, which
+# went negative over 31 paper trades.
 
 $Repo = "C:\Users\seanf\Documents\trading-bot"
 $Pyw  = "$Repo\.venv\Scripts\pythonw.exe"
-$Monitor = "$Repo\scripts\monitor_loop.py"
-$Digest  = "$Repo\scripts\bot_report.py"
+$Trace  = "$Repo\scripts\whale_trace.py"
+$Digest = "$Repo\scripts\bot_report.py"
 
-Write-Host "=== Whale Copy Bot - task setup ===" -ForegroundColor Cyan
+Write-Host "=== Whale Trace - task setup ===" -ForegroundColor Cyan
 
+# Retire the old pipeline task if present.
 schtasks /Delete /TN "TradingBotMonitor" /F 2>$null
-schtasks /Create /TN "TradingBotMonitor" /TR "`"$Pyw`" `"$Monitor`" --once" /SC MINUTE /MO 60 /F
+
+schtasks /Delete /TN "TradingBotWhaleTrace" /F 2>$null
+schtasks /Create /TN "TradingBotWhaleTrace" /TR "`"$Pyw`" `"$Trace`"" /SC MINUTE /MO 15 /F
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "OK  TradingBotMonitor - every 60 minutes" -ForegroundColor Green
+    Write-Host "OK  TradingBotWhaleTrace - every 15 minutes" -ForegroundColor Green
 } else {
-    Write-Host "FAIL TradingBotMonitor" -ForegroundColor Red
+    Write-Host "FAIL TradingBotWhaleTrace" -ForegroundColor Red
 }
 
 schtasks /Delete /TN "TradingBotDigest" /F 2>$null
@@ -25,9 +32,7 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "FAIL TradingBotDigest" -ForegroundColor Red
 }
 
-schtasks /Change /TN "TradingBotMonitor" /ENABLE
-schtasks /Run /TN "TradingBotMonitor"
+schtasks /Run /TN "TradingBotWhaleTrace"
 Write-Host ""
-Write-Host "First pipeline cycle started. Check data/overnight.log in ~6 min." -ForegroundColor Yellow
-Write-Host "Telegram: BUY/close alerts + 9am/9pm digest." -ForegroundColor Yellow
+Write-Host "Whale Trace polling every 15 min. Telegram: shadow opens/closes + digests." -ForegroundColor Yellow
 Write-Host "Guide: WHALE_BOT.md" -ForegroundColor Yellow

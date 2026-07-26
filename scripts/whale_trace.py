@@ -1,15 +1,24 @@
-"""Whale Trace — shadow-follow specific high-PnL Solana wallets.
+"""Whale Trace — realistically shadow-copy high-PnL Solana wallets.
 
-This is a SEPARATE analysis from the whale_copy strategy. It:
+The primary strategy. It:
   1. Pulls Birdeye's weekly top-PnL trader leaderboard and keeps wallets with
      real (realized) profit and a meaningful trade count.
-  2. Polls each traced wallet's recent swaps.
-  3. Records "shadow trades": when a traced wallet buys a token, we log a
-     hypothetical $25 position at their fill price; when they sell (or after
-     24h), we close it and record the P&L we WOULD have made copying them.
+  2. Polls each traced wallet's recent swaps every cycle.
+  3. Records "shadow trades" at COPYABLE prices: when a traced wallet buys a
+     token, we log a hypothetical $25 position at the CURRENT market price
+     (plus slippage) — the fill a real copier would get — not the whale's own
+     fill. Exits: whale sells (at our detection-time market price), -50% stop,
+     or 24h max hold.
+  4. Culls wallets whose copyable results are consistently unprofitable, so
+     the watchlist converges on wallets actually worth mirroring.
+
+Rows recorded before this realism upgrade used the whale's own fill price and
+are kept as entry_mode='fill' legacy data, reported separately — their P&L
+overstates what a copier could earn (launch snipers fill at prices that exist
+for milliseconds).
 
 It writes only to its own tables (whale_wallets, whale_trace_trades) and never
-touches signals or paper_trades, so it cannot affect the live whale_copy run.
+touches signals or paper_trades.
 
 Usage:
     python scripts/whale_trace.py            # one trace cycle
@@ -33,15 +42,21 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import telegram_notifier  # noqa: E402
 from whale_config import (  # noqa: E402
+    WHALE_TRACE_CULL_MIN_CLOSED,
     WHALE_TRACE_ENABLED,
     WHALE_TRACE_LEADERBOARD_REFRESH_HOURS,
+    WHALE_TRACE_MAX_CHASE_MULT,
     WHALE_TRACE_MAX_HOLD_HOURS,
     WHALE_TRACE_MAX_WALLETS,
     WHALE_TRACE_MIN_BUY_USD,
     WHALE_TRACE_MIN_REALIZED_PNL,
     WHALE_TRACE_MIN_TRADES_1W,
     WHALE_TRACE_SHADOW_SIZE_USD,
+    WHALE_TRACE_SLIPPAGE_PCT,
+    WHALE_TRACE_STOP_LOSS_PCT,
 )
+
+SLIP = WHALE_TRACE_SLIPPAGE_PCT / 100.0
 
 load_dotenv(dotenv_path=ROOT / ".env")
 
@@ -98,6 +113,17 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_trace_open
         ON whale_trace_trades(wallet, address, closed_at)
     """)
+    # Migrations for the realistic-copy upgrade. NULL entry_mode = legacy rows
+    # recorded at the whale's own fill price.
+    for ddl in (
+        "ALTER TABLE whale_trace_trades ADD COLUMN entry_mode TEXT",
+        "ALTER TABLE whale_trace_trades ADD COLUMN whale_fill_price REAL",
+        "ALTER TABLE whale_wallets ADD COLUMN culled INTEGER NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
     conn.close()
 
@@ -108,7 +134,7 @@ def _headers() -> dict:
     return {"X-API-KEY": BIRDEYE_KEY, "x-chain": "solana", "accept": "application/json"}
 
 
-def fetch_leaderboard(client: httpx.Client, pages: int = 3) -> list[dict]:
+def fetch_leaderboard(client: httpx.Client, pages: int = 10) -> list[dict]:
     """Weekly top-PnL wallets from Birdeye (10 per page)."""
     items: list[dict] = []
     for page in range(pages):
@@ -170,6 +196,32 @@ def fetch_price(client: httpx.Client, address: str) -> float | None:
         return None
 
 
+def fetch_prices(client: httpx.Client, addresses: list[str]) -> dict[str, float]:
+    """Batch current prices; returns {address: price} for those found."""
+    if not addresses:
+        return {}
+    out: dict[str, float] = {}
+    for i in range(0, len(addresses), 50):
+        chunk = addresses[i:i + 50]
+        try:
+            r = client.get(
+                f"{BIRDEYE_BASE}/defi/multi_price",
+                headers=_headers(),
+                params={"list_address": ",".join(chunk)},
+                timeout=20.0,
+            )
+            if r.status_code != 200:
+                continue
+            data = r.json().get("data") or {}
+            for addr, info in data.items():
+                val = (info or {}).get("value")
+                if val:
+                    out[addr] = float(val)
+        except Exception:
+            continue
+    return out
+
+
 # ------------------------------------------------------- swap classification
 
 def classify_swap(item: dict) -> tuple[str, str, str, float, float] | None:
@@ -227,26 +279,31 @@ def refresh_leaderboard_if_stale(client: httpx.Client, conn: sqlite3.Connection)
                 last_refreshed = excluded.last_refreshed
         """, (w, it.get("pnl"), it.get("realized_pnl"), it.get("trade_count"),
               it.get("volume"), now, now))
+    # A culled wallet stays culled even if it re-enters the leaderboard.
+    conn.execute("UPDATE whale_wallets SET active = 0 WHERE culled = 1")
     conn.commit()
     print(f"  {len(items)} leaderboard wallets fetched, {len(qualified)} qualified, tracing {len(keep)}")
 
 
 def open_shadow(conn: sqlite3.Connection, wallet: str, addr: str, sym: str,
-                price: float, whale_usd: float, ts: int, tx: str) -> bool:
+                market_price: float, whale_fill: float, whale_usd: float,
+                ts: int, tx: str) -> bool:
+    """Open a shadow position at the copyable price: current market + slippage."""
     dup = conn.execute("""
         SELECT 1 FROM whale_trace_trades
         WHERE wallet = ? AND address = ? AND closed_at IS NULL
     """, (wallet, addr)).fetchone()
     if dup:
         return False
-    tokens = WHALE_TRACE_SHADOW_SIZE_USD / price
+    entry = market_price * (1 + SLIP)
+    tokens = WHALE_TRACE_SHADOW_SIZE_USD / entry
     conn.execute("""
         INSERT INTO whale_trace_trades
             (wallet, address, symbol, opened_at, entry_price, whale_buy_usd,
-             shadow_size_usd, tokens_held, entry_tx)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (wallet, addr, sym, ts, price, whale_usd,
-          WHALE_TRACE_SHADOW_SIZE_USD, tokens, tx))
+             shadow_size_usd, tokens_held, entry_tx, entry_mode, whale_fill_price)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'market', ?)
+    """, (wallet, addr, sym, ts, entry, whale_usd,
+          WHALE_TRACE_SHADOW_SIZE_USD, tokens, tx, whale_fill))
     return True
 
 
@@ -269,9 +326,26 @@ def close_shadow(conn: sqlite3.Connection, trade_id: int, price: float,
             "reason": reason}
 
 
+def cull_bad_wallets(conn: sqlite3.Connection) -> list[str]:
+    """Deactivate wallets whose copyable (market-mode) results are net losers."""
+    rows = conn.execute("""
+        SELECT wallet, COUNT(*) n, COALESCE(SUM(pnl_usd), 0) total
+        FROM whale_trace_trades
+        WHERE entry_mode = 'market' AND closed_at IS NOT NULL
+        GROUP BY wallet
+        HAVING n >= ? AND total < 0
+    """, (WHALE_TRACE_CULL_MIN_CLOSED,)).fetchall()
+    culled = [r[0] for r in rows]
+    for w in culled:
+        conn.execute(
+            "UPDATE whale_wallets SET culled = 1, active = 0 WHERE wallet = ?", (w,))
+    return culled
+
+
 def trace_cycle() -> dict:
     """One full trace pass. Returns summary of opens/closes."""
     init_db()
+    now = int(time.time())
     opens: list[dict] = []
     closes: list[dict] = []
     conn = sqlite3.connect(DB_PATH)
@@ -279,53 +353,98 @@ def trace_cycle() -> dict:
         refresh_leaderboard_if_stale(client, conn)
 
         wallets = conn.execute("""
-            SELECT wallet, last_checked_at FROM whale_wallets WHERE active = 1
+            SELECT wallet, last_checked_at FROM whale_wallets
+            WHERE active = 1 AND culled = 0
         """).fetchall()
         print(f"Tracing {len(wallets)} wallets...")
 
         for wallet, last_checked in wallets:
-            # First pass: only look back 2h so we don't backfill week-old trades.
-            after = last_checked if last_checked > 0 else int(time.time()) - 2 * 3600
+            # Never look back more than 2h — copying a stale buy is meaningless.
+            after = max(last_checked, now - 2 * 3600)
             swaps = fetch_wallet_swaps(client, wallet, after)
             newest_ts = last_checked
+
+            # Parse the whole batch first: if the whale already sold a token
+            # later in this same batch, a real copier polling on our schedule
+            # would never have entered — don't open just to eat slippage.
+            batch = []
             for it in swaps:
                 ts_ = int(it.get("block_unix_time") or 0)
                 newest_ts = max(newest_ts, ts_)
                 parsed = classify_swap(it)
-                if not parsed:
-                    continue
+                if parsed:
+                    batch.append((ts_, it.get("tx_hash", ""), parsed))
+            sold_later = {
+                (p[1], t) for t, _, p in batch if p[0] == "sell"
+            }  # (token_address, sell_ts)
+
+            for ts_, tx, parsed in batch:
                 side, addr, sym, token_amt, usd = parsed
-                price = usd / token_amt
-                tx = it.get("tx_hash", "")
+                whale_fill = usd / token_amt
                 if side == "buy" and usd >= WHALE_TRACE_MIN_BUY_USD:
-                    if open_shadow(conn, wallet, addr, sym, price, usd, ts_, tx):
+                    if any(a == addr and sell_ts > ts_ for a, sell_ts in sold_later):
+                        continue  # round-trip completed before we could act
+                    already_open = conn.execute("""
+                        SELECT 1 FROM whale_trace_trades
+                        WHERE wallet = ? AND address = ? AND closed_at IS NULL
+                    """, (wallet, addr)).fetchone()
+                    if already_open:
+                        continue
+                    market = fetch_price(client, addr)
+                    if not market:
+                        continue
+                    if market > whale_fill * WHALE_TRACE_MAX_CHASE_MULT:
+                        # Token already ran away from the whale's fill — a real
+                        # copier is too late. Don't chase.
+                        continue
+                    if open_shadow(conn, wallet, addr, sym, market, whale_fill,
+                                   usd, ts_, tx):
                         opens.append({"symbol": sym, "wallet": wallet,
-                                      "price": price, "whale_usd": usd})
+                                      "price": market * (1 + SLIP),
+                                      "whale_usd": usd})
                 elif side == "sell":
                     open_row = conn.execute("""
                         SELECT id FROM whale_trace_trades
                         WHERE wallet = ? AND address = ? AND closed_at IS NULL
                     """, (wallet, addr)).fetchone()
                     if open_row:
-                        closes.append(close_shadow(
-                            conn, open_row[0], price, "WHALE_SOLD", ts_, tx))
+                        # Exit at the price WE see when detecting their sell.
+                        market = fetch_price(client, addr)
+                        if market:
+                            closes.append(close_shadow(
+                                conn, open_row[0], market * (1 - SLIP),
+                                "WHALE_SOLD", now, tx))
             conn.execute("UPDATE whale_wallets SET last_checked_at = ? WHERE wallet = ?",
                          (newest_ts, wallet))
             conn.commit()
             time.sleep(0.25)
 
-        # Force-close shadows held past the max window at current market price.
-        stale_cutoff = int(time.time()) - WHALE_TRACE_MAX_HOLD_HOURS * 3600
-        stale = conn.execute("""
-            SELECT id, address FROM whale_trace_trades
-            WHERE closed_at IS NULL AND opened_at < ?
-        """, (stale_cutoff,)).fetchall()
-        for trade_id, addr in stale:
-            price = fetch_price(client, addr)
-            if price:
+        # Mark open market-mode shadows to market: stop-loss and max-hold.
+        open_rows = conn.execute("""
+            SELECT id, address, opened_at, entry_price, shadow_size_usd, tokens_held
+            FROM whale_trace_trades
+            WHERE closed_at IS NULL AND entry_mode = 'market'
+        """).fetchall()
+        prices = fetch_prices(client, list({r[1] for r in open_rows}))
+        max_hold_cutoff = now - WHALE_TRACE_MAX_HOLD_HOURS * 3600
+        for trade_id, addr, opened_at, entry, size, tokens in open_rows:
+            market = prices.get(addr)
+            if not market:
+                continue
+            exit_price = market * (1 - SLIP)
+            pnl_pct = (tokens * exit_price - size) / size * 100
+            if pnl_pct <= -WHALE_TRACE_STOP_LOSS_PCT:
                 closes.append(close_shadow(
-                    conn, trade_id, price, "MAX_HOLD_24H", int(time.time())))
-            time.sleep(0.2)
+                    conn, trade_id, exit_price, "STOP_LOSS", now))
+            elif opened_at < max_hold_cutoff:
+                closes.append(close_shadow(
+                    conn, trade_id, exit_price, "MAX_HOLD_24H", now))
+        conn.commit()
+
+        culled = cull_bad_wallets(conn)
+        if culled:
+            print(f"Culled {len(culled)} wallet(s) with losing copyable records: "
+                  + ", ".join(w[:8] + ".." for w in culled))
         conn.commit()
 
     conn.close()
@@ -343,25 +462,29 @@ def build_report() -> str:
     closed = conn.execute("""
         SELECT COUNT(*) n,
                SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) wins,
-               COALESCE(SUM(pnl_usd), 0) total
-        FROM whale_trace_trades WHERE closed_at IS NOT NULL
+               COALESCE(SUM(pnl_usd), 0) total,
+               COALESCE(AVG(pnl_pct), 0) avg_pct
+        FROM whale_trace_trades
+        WHERE closed_at IS NOT NULL AND entry_mode = 'market'
     """).fetchone()
     n, wins, total = closed["n"] or 0, closed["wins"] or 0, closed["total"] or 0.0
     wr = (100 * wins / n) if n else 0.0
 
-    lines = ["<b>Whale Trace (shadow copy, not real trades)</b>"]
-    lines.append(f"Closed shadows: {n}  |  WR: {wr:.0f}%  |  P&L: {total:+.2f}")
+    lines = ["<b>Whale Trace (realistic copy simulation)</b>"]
+    lines.append(f"Closed: {n}  |  WR: {wr:.0f}%  |  P&L: {total:+.2f}  "
+                 f"|  avg {closed['avg_pct']:+.1f}%/trade")
 
     per_wallet = conn.execute("""
         SELECT wallet, COUNT(*) n,
                SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END) wins,
                COALESCE(SUM(pnl_usd), 0) total
-        FROM whale_trace_trades WHERE closed_at IS NOT NULL
+        FROM whale_trace_trades
+        WHERE closed_at IS NOT NULL AND entry_mode = 'market'
         GROUP BY wallet ORDER BY total DESC LIMIT 5
     """).fetchall()
     if per_wallet:
         lines.append("")
-        lines.append("<b>Top traced wallets</b>")
+        lines.append("<b>Top traced wallets (copyable P&L)</b>")
         for r in per_wallet:
             w_wr = (100 * (r["wins"] or 0) / r["n"]) if r["n"] else 0
             lines.append(f"  {r['wallet'][:8]}..: {r['n']} closed, "
@@ -369,7 +492,8 @@ def build_report() -> str:
 
     open_rows = conn.execute("""
         SELECT symbol, wallet, opened_at, whale_buy_usd FROM whale_trace_trades
-        WHERE closed_at IS NULL ORDER BY opened_at DESC
+        WHERE closed_at IS NULL AND entry_mode = 'market'
+        ORDER BY opened_at DESC
     """).fetchall()
     lines.append("")
     if open_rows:
@@ -382,8 +506,19 @@ def build_report() -> str:
         lines.append("<b>Open shadows:</b> none")
 
     n_active = conn.execute(
-        "SELECT COUNT(*) FROM whale_wallets WHERE active = 1").fetchone()[0]
-    lines.append(f"\nTracing {n_active} wallets from Birdeye weekly PnL leaderboard.")
+        "SELECT COUNT(*) FROM whale_wallets WHERE active = 1 AND culled = 0"
+    ).fetchone()[0]
+    n_culled = conn.execute(
+        "SELECT COUNT(*) FROM whale_wallets WHERE culled = 1").fetchone()[0]
+    lines.append(f"\nTracing {n_active} wallets ({n_culled} culled for losing records).")
+
+    legacy = conn.execute("""
+        SELECT COUNT(*) n FROM whale_trace_trades
+        WHERE closed_at IS NOT NULL AND (entry_mode IS NULL OR entry_mode = 'fill')
+    """).fetchone()
+    if legacy["n"]:
+        lines.append(f"<i>({legacy['n']} legacy fill-price shadows excluded — "
+                     f"not copyable prices)</i>")
     conn.close()
     return "\n".join(lines)
 
@@ -406,7 +541,6 @@ def notify(summary: dict) -> None:
             f"<b>{c['symbol']}</b> via {c['wallet'][:8]}..\n"
             f"P&L: {sign}${c['pnl_usd']:.2f} ({sign}{c['pnl_pct']:.1f}%)\n"
             f"Reason: {c['reason']}",
-            silent=True,
         )
 
 

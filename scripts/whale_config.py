@@ -52,3 +52,11 @@ WHALE_TRACE_MIN_BUY_USD = 500.0     # ignore wallet buys smaller than this
 WHALE_TRACE_SHADOW_SIZE_USD = 25.0  # hypothetical $ per shadow position
 WHALE_TRACE_MAX_HOLD_HOURS = 24     # force-close shadow position after this
 WHALE_TRACE_LEADERBOARD_REFRESH_HOURS = 24
+
+# Realistic-copy simulation ("market" mode) — entries/exits at the price WE
+# could get when the whale's trade is detected, not the whale's own fill.
+WHALE_TRACE_POLL_MINUTES = 15       # scheduled task interval (docs)
+WHALE_TRACE_SLIPPAGE_PCT = 2.0      # paid on entry and exit
+WHALE_TRACE_STOP_LOSS_PCT = 50.0    # close shadow if down this much
+WHALE_TRACE_MAX_CHASE_MULT = 2.0    # skip entry if market already 2x whale's fill
+WHALE_TRACE_CULL_MIN_CLOSED = 5     # closed shadows before a wallet can be culled
