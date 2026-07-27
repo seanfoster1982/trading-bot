@@ -119,13 +119,16 @@ SAFETY_MAX_SCORE = 50.0             # breakout / bb_bounce / whale_trace
 SAFETY_MAX_SCORE_FRESH = 80.0
 
 # --- LIVE trading (live_trader.py) — REAL MONEY ---
-# One-shot $25 authorization (user, 2026-07-26). The executor only fires when
-# a candidate passes criteria far stricter than any shadow strategy AND the
-# wallet holds enough SOL. Once the lifetime budget is spent, no more buys.
+# $100 lifetime authorization (user, 2026-07-27), split into $25 bullets.
+# The executor only fires when a candidate passes criteria far stricter than
+# any shadow strategy AND the wallet holds enough SOL. Risk controls:
+# budget cap, concurrency cap, buy spacing, and a drawdown halt.
 LIVE_ENABLED = True
-LIVE_BUDGET_USD = 25.0              # lifetime spend cap across ALL live buys
-LIVE_TRADE_USD = 25.0               # size per position
-LIVE_MAX_OPEN = 1
+LIVE_BUDGET_USD = 100.0             # lifetime spend cap across ALL live buys
+LIVE_TRADE_USD = 25.0               # size per position (4 bullets total)
+LIVE_MAX_OPEN = 2
+LIVE_MAX_REALIZED_LOSS_USD = 50.0   # halt all new buys if realized P&L <= -this
+LIVE_MIN_HOURS_BETWEEN_BUYS = 6     # no correlated spray-buying in one hot hour
 LIVE_SAFETY_MAX_SCORE = 30.0        # much stricter than the shadow gate (50)
 LIVE_MIN_LIQUIDITY = 100_000.0
 LIVE_WHALE_CONFLUENCE_MIN = 2       # distinct traced whales buying same token

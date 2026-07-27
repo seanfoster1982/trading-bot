@@ -131,8 +131,12 @@ whether they exist. Early evidence: fresh tokens can drop 98% between polls.
 
 ## LIVE trading (`scripts/live_trader.py`) — REAL MONEY
 
-Authorized 2026-07-26: a one-shot **$25 lifetime budget**. The executor runs
-every 15 min (TradingBotLive) and only buys when ALL of these hold:
+Authorized 2026-07-27: **$100 lifetime budget**, deployed as four $25
+bullets, max 2 concurrent positions, minimum 6h between buys, and a
+**drawdown halt** — if realized live losses reach -$50, all new buying stops
+permanently until the user intervenes. Paper/shadow trading continues in
+parallel regardless. The executor runs every 15 min (TradingBotLive) and
+only buys when ALL of these hold:
 
 - **Signal**: 2+ distinct traced whales bought the same token within 90 min
   (whale confluence), or a bb_bounce full-checklist entry just fired

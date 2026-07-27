@@ -66,6 +66,8 @@ from whale_config import (  # noqa: E402
     LIVE_FEE_BUFFER_SOL,
     LIVE_MAX_HOLD_HOURS,
     LIVE_MAX_OPEN,
+    LIVE_MAX_REALIZED_LOSS_USD,
+    LIVE_MIN_HOURS_BETWEEN_BUYS,
     LIVE_MIN_LIQUIDITY,
     LIVE_SAFETY_MAX_SCORE,
     LIVE_SLIPPAGE_BPS,
@@ -335,6 +337,18 @@ def open_count(conn: sqlite3.Connection) -> int:
     ).fetchone()[0]
 
 
+def realized_pnl(conn: sqlite3.Connection) -> float:
+    return conn.execute("""
+        SELECT COALESCE(SUM(pnl_usd), 0) FROM live_trades
+        WHERE closed_at IS NOT NULL
+    """).fetchone()[0]
+
+
+def last_buy_at(conn: sqlite3.Connection) -> int:
+    return conn.execute(
+        "SELECT COALESCE(MAX(opened_at), 0) FROM live_trades").fetchone()[0]
+
+
 # ------------------------------------------------------------- buy / sell ---
 
 def try_buy(client: httpx.Client, conn: sqlite3.Connection, keypair,
@@ -501,6 +515,17 @@ def cycle() -> None:
             print("max live positions open — manage-only mode")
             conn.close()
             return
+        pnl = realized_pnl(conn)
+        if pnl <= -LIVE_MAX_REALIZED_LOSS_USD:
+            print(f"DRAWDOWN HALT: realized P&L ${pnl:+.2f} — no new buys")
+            conn.close()
+            return
+        since_last = int(time.time()) - last_buy_at(conn)
+        if last_buy_at(conn) and since_last < LIVE_MIN_HOURS_BETWEEN_BUYS * 3600:
+            print(f"buy spacing: last buy {since_last / 3600:.1f}h ago "
+                  f"(min {LIVE_MIN_HOURS_BETWEEN_BUYS}h) — manage-only mode")
+            conn.close()
+            return
 
         cands = find_candidates(conn)
         print(f"{len(cands)} candidate(s) from shadow systems")
@@ -522,7 +547,10 @@ def status() -> None:
     print(f"Wallet: {kp.pubkey() if kp else 'NO KEY'}")
     print(f"SOL: {bal:.4f} (~${bal * sol_price:,.2f})")
     print(f"Budget left: ${budget_left(conn):.2f} of ${LIVE_BUDGET_USD:.2f}")
-    print(f"Open live positions: {open_count(conn)}")
+    print(f"Open live positions: {open_count(conn)} (max {LIVE_MAX_OPEN})")
+    pnl = realized_pnl(conn)
+    halt = " [DRAWDOWN HALT ACTIVE]" if pnl <= -LIVE_MAX_REALIZED_LOSS_USD else ""
+    print(f"Realized P&L: ${pnl:+.2f}{halt}")
     for row in conn.execute("""
         SELECT symbol, source, opened_at, usd_spent, pnl_usd, close_reason
         FROM live_trades ORDER BY id"""):
