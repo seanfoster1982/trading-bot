@@ -88,6 +88,25 @@ SNIPER_FRESH = {
     "max_open": 8,
 }
 
+# Strategy C: Bollinger-bounce ("bb_bounce") — trending/high-volume tokens that
+# dipped to the lower Bollinger Band and printed a green reversal candle,
+# confirmed by MACD turning green, Stoch RSI rising from the bottom toward the
+# midline, momentum (MOM-10) trending up, and buy-dominant transaction flow.
+# A roadmap event within 14 days (data/roadmap_events.json) counts as one
+# confirmation. Chart patterns (double bottom, higher lows) are recorded on
+# every entry so we learn which setups actually win.
+SNIPER_BB_BOUNCE = {
+    "min_liquidity": 100_000.0,     # trending-leader universe
+    "min_volume_1h": 25_000.0,
+    "max_change_1h": 5.0,           # bounce entries happen on dips, not spikes
+    "candles_checked": 12,          # OHLCV fetches per cycle (top volume first)
+    "min_buy_volume_pct": 55.0,     # tx review: buys must dominate
+    "stop_pct": 25.0,
+    "max_hold_hours": 48,
+    "max_open": 6,
+}
+ROADMAP_SIGNAL_DAYS = 14            # roadmap event within N days = a signal
+
 # Strategy B: breakouts — established-enough tokens accelerating right now.
 # The +25%..+300% band deliberately excludes launch-pump garbage (+60,000%).
 SNIPER_BREAKOUT = {

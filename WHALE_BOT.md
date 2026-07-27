@@ -53,6 +53,18 @@ accounting (detection-time prices, 3% slippage each way, own tables only):
   (+60,000%) that are already over. -30% stop, +60% target, 24h max hold.
 - **market pulse** — every cycle logs breadth of the top-100 volume tokens
   (median 1h change, % gainers) and the new-listing rate; shown in the digest.
+- **bb_bounce** — reviews the charts of the top trending (highest 1h volume)
+  tokens every cycle. Entry requires ALL of:
+  1. A candle tagged the lower Bollinger Band and the latest candle is green
+  2. MACD histogram turning green
+  3. Stoch RSI bottomed (<25 in last 4 bars) and rising toward the midline
+  4. Momentum (MOM-10) trending up
+  5. Transaction review: last 50 swaps must be ≥55% buys by volume
+  A roadmap event within 14 days (edit `data/roadmap_events.json`) counts as
+  one confirmation. Detected chart patterns (double bottom, higher lows) are
+  recorded on each entry so results can be broken down by setup.
+  -25% stop, 48h max hold. Sentiment analysis requires a paid X/LunarCrush
+  API key — the entry hook exists if one is added later.
 
 Reality check: true same-block sniping is won by MEV bots on dedicated RPC
 infrastructure — no polling bot can compete there. These strategies test the

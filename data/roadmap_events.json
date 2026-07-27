@@ -1,0 +1,13 @@
+{
+  "_help": [
+    "Add upcoming roadmap/catalyst dates here. Key = token SYMBOL or mint address.",
+    "A token with an event within 14 days needs one fewer indicator confirmation",
+    "for a bb_bounce entry, and the event name is recorded on the trade.",
+    "Example entry below — replace with real ones. '_help' and keys starting",
+    "with '_' are ignored."
+  ],
+  "_EXAMPLE": [
+    {"name": "CEX listing announcement", "date": "2026-08-05"},
+    {"name": "V2 staking launch", "date": "2026-08-12"}
+  ]
+}

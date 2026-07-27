@@ -48,9 +48,18 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import telegram_notifier  # noqa: E402
+import pandas as pd  # noqa: E402
+
+from compute_indicators import (  # noqa: E402
+    compute_bollinger,
+    compute_macd,
+    compute_stoch_rsi,
+)
 from whale_config import (  # noqa: E402
+    ROADMAP_SIGNAL_DAYS,
     SHADOW_BREAK_EVEN_TRIGGER_PCT,
     SHADOW_TAKE_INITIAL_MULT,
+    SNIPER_BB_BOUNCE,
     SNIPER_BREAKOUT,
     SNIPER_ENABLED,
     SNIPER_FRESH,
@@ -59,7 +68,7 @@ from whale_config import (  # noqa: E402
     SNIPER_SHADOW_SIZE_USD,
     SNIPER_SLIPPAGE_PCT,
 )
-from whale_trace import fetch_price, fetch_prices  # noqa: E402
+from whale_trace import CASH_MINTS, fetch_price, fetch_prices  # noqa: E402
 
 load_dotenv(dotenv_path=ROOT / ".env")
 
@@ -68,7 +77,17 @@ BIRDEYE_BASE = "https://public-api.birdeye.so"
 BIRDEYE_KEY = os.getenv("BIRDEYE_API_KEY", "")
 SLIP = SNIPER_SLIPPAGE_PCT / 100.0
 
-STRATEGIES = {"fresh_listing": SNIPER_FRESH, "breakout": SNIPER_BREAKOUT}
+STRATEGIES = {
+    "fresh_listing": SNIPER_FRESH,
+    "breakout": SNIPER_BREAKOUT,
+    "bb_bounce": SNIPER_BB_BOUNCE,
+}
+
+ROADMAP_PATH = ROOT / "data" / "roadmap_events.json"
+
+# Majors we never want the bounce strategy to shadow-trade.
+MAJOR_SYMBOLS = {"SOL", "WSOL", "USDC", "USDT", "WBTC", "WETH", "CBBTC",
+                 "JITOSOL", "MSOL", "BSOL", "JLP", "JUPSOL"}
 
 
 # ---------------------------------------------------------------- schema ----
@@ -207,6 +226,237 @@ def scan_breakouts(client: httpx.Client) -> tuple[list[dict], int]:
                      "volume_1h": round(float(it.get("volume_1h_usd") or 0))},
         })
     return out, len(out)
+
+
+# ------------------------------------------------- bb_bounce signal logic ---
+
+def load_roadmap_events() -> dict:
+    """User-maintained roadmap dates: {"SYMBOL or address": [{"name","date"}]}"""
+    if not ROADMAP_PATH.exists():
+        return {}
+    try:
+        return json.loads(ROADMAP_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def roadmap_event_within(symbol: str, address: str, days: int = ROADMAP_SIGNAL_DAYS) -> str | None:
+    """Name of a roadmap event within the next `days`, if any."""
+    events = load_roadmap_events()
+    now = datetime.now(timezone.utc)
+    for key in (symbol, symbol.upper(), address):
+        for ev in events.get(key, []):
+            try:
+                dt = datetime.fromisoformat(ev["date"]).replace(tzinfo=timezone.utc)
+            except (KeyError, ValueError):
+                continue
+            delta_days = (dt - now).total_seconds() / 86400
+            if 0 <= delta_days <= days:
+                return ev.get("name", "roadmap event")
+    return None
+
+
+def detect_patterns(df: pd.DataFrame) -> list[str]:
+    """Conservative bullish chart-pattern detectors on 15m candles."""
+    patterns = []
+    lows = df["low"].to_numpy()
+    closes = df["close"].to_numpy()
+    if len(lows) >= 30:
+        # Higher lows: minima of three consecutive 10-candle windows ascending.
+        w1, w2, w3 = lows[-30:-20].min(), lows[-20:-10].min(), lows[-10:].min()
+        if w1 < w2 < w3:
+            patterns.append("higher_lows")
+    if len(lows) >= 40:
+        # Double bottom: two window minima within 2.5% of each other, at least
+        # 10 candles apart, with price now recovering above both.
+        first, second = lows[-40:-20].min(), lows[-20:].min()
+        if abs(first - second) / max(first, second) <= 0.025 \
+                and closes[-1] > max(first, second) * 1.03:
+            patterns.append("double_bottom")
+    return patterns
+
+
+def check_bb_bounce_signal(df: pd.DataFrame,
+                           has_roadmap: bool = False) -> tuple[bool, dict]:
+    """The user's setup, on 15m candles:
+      MANDATORY: a recent candle tagged the lower Bollinger Band and the
+                 latest candle closed green.
+      Confirmations (need all 3, or 2 when a roadmap event is near):
+        - MACD histogram turning green (rising vs previous bar)
+        - Stoch RSI %K bottomed (<25 within last 4 bars) and rising toward
+          the midline (Stoch RSI saturates in 2-3 bars, so "currently low"
+          would miss almost every real bounce at 15-min polling)
+        - Momentum (MOM-10) trending up across the last 3 bars
+    Returns (signal, gates_detail)."""
+    if len(df) < 60:
+        return False, {"reason": "insufficient candles"}
+    close, low = df["close"], df["low"]
+
+    _, _, bb_lower = compute_bollinger(close)
+    macd_line, macd_signal, macd_hist = compute_macd(close)
+    k, _d = compute_stoch_rsi(close)
+    mom = close - close.shift(10)
+
+    if bb_lower.iloc[-2:].isna().any() or pd.isna(k.iloc[-1]) or pd.isna(mom.iloc[-3]):
+        return False, {"reason": "indicators not ready"}
+
+    # Mandatory: lower-band tag within the last 2 candles + green latest candle.
+    bb_touch = bool((low.iloc[-2] <= bb_lower.iloc[-2] * 1.005)
+                    or (low.iloc[-1] <= bb_lower.iloc[-1] * 1.005))
+    green_candle = bool(close.iloc[-1] > df["open"].iloc[-1])
+
+    gates = {
+        "bb_touch": bb_touch,
+        "green_candle": green_candle,
+        "macd_green": bool(macd_hist.iloc[-1] > macd_hist.iloc[-2]),
+        "stoch_bottom_rising": bool(k.iloc[-4:].min() <= 25
+                                    and k.iloc[-1] > k.iloc[-2]),
+        "momentum_up": bool(mom.iloc[-1] > mom.iloc[-2]
+                            and mom.iloc[-1] > mom.iloc[-3]),
+    }
+    confirmations = sum((gates["macd_green"], gates["stoch_bottom_rising"],
+                         gates["momentum_up"]))
+    needed = 2 if has_roadmap else 3
+    signal = bb_touch and green_candle and confirmations >= needed
+    gates["confirmations"] = f"{confirmations}/{needed}"
+    return signal, gates
+
+
+def fetch_candles_15m(client: httpx.Client, address: str,
+                      hours: int = 30) -> pd.DataFrame | None:
+    now = int(time.time())
+    try:
+        r = client.get(
+            f"{BIRDEYE_BASE}/defi/ohlcv",
+            headers=_headers(),
+            params={"address": address, "type": "15m",
+                    "time_from": now - hours * 3600, "time_to": now},
+            timeout=30.0,
+        )
+        if r.status_code != 200:
+            return None
+        items = r.json().get("data", {}).get("items", [])
+        if not items:
+            return None
+        df = pd.DataFrame([{
+            "timestamp": it.get("unixTime"), "open": it.get("o"),
+            "high": it.get("h"), "low": it.get("l"), "close": it.get("c"),
+            "volume": it.get("v"),
+        } for it in items]).dropna()
+        return df.sort_values("timestamp").reset_index(drop=True)
+    except Exception:
+        return None
+
+
+def review_transactions(client: httpx.Client, address: str) -> dict | None:
+    """Are most recent swaps green (buys)? Returns flow stats or None."""
+    try:
+        r = client.get(
+            f"{BIRDEYE_BASE}/defi/txs/token",
+            headers=_headers(),
+            params={"address": address, "offset": 0, "limit": 50,
+                    "tx_type": "swap", "sort_type": "desc"},
+            timeout=20.0,
+        )
+        if r.status_code != 200:
+            return None
+        items = r.json().get("data", {}).get("items", [])
+    except Exception:
+        return None
+    if not items:
+        return None
+
+    buy_vol = sell_vol = 0.0
+    buys = sells = 0
+    for it in items:
+        side = it.get("side")
+        # USD value from the cash leg of the swap.
+        usd = 0.0
+        for leg in (it.get("quote") or {}, it.get("base") or {}):
+            if leg.get("address") in CASH_MINTS and leg.get("price"):
+                usd = abs(float(leg.get("uiChangeAmount") or 0)) * float(leg["price"])
+                break
+        if side == "buy":
+            buys += 1
+            buy_vol += usd
+        elif side == "sell":
+            sells += 1
+            sell_vol += usd
+    total_n, total_v = buys + sells, buy_vol + sell_vol
+    if total_n == 0:
+        return None
+    return {
+        "buy_count_pct": round(100 * buys / total_n, 1),
+        "buy_volume_pct": round(100 * buy_vol / total_v, 1) if total_v else 0.0,
+        "n_txs": total_n,
+    }
+
+
+def scan_bb_bounce(client: httpx.Client) -> list[dict]:
+    """Bollinger-bounce candidates from the high-volume (trending) universe."""
+    cfg = SNIPER_BB_BOUNCE
+    try:
+        r = client.get(
+            f"{BIRDEYE_BASE}/defi/v3/token/list",
+            headers=_headers(),
+            params={"sort_by": "volume_1h_usd", "sort_type": "desc",
+                    "min_liquidity": cfg["min_liquidity"],
+                    "min_volume_1h_usd": cfg["min_volume_1h"], "limit": 50},
+            timeout=30.0,
+        )
+        if r.status_code != 200:
+            print(f"[bb_bounce] HTTP {r.status_code}", file=sys.stderr)
+            return []
+        items = r.json().get("data", {}).get("items", [])
+    except Exception as e:
+        print(f"[bb_bounce] {type(e).__name__}: {e}", file=sys.stderr)
+        return []
+
+    # Universe: trending tokens, not majors, currently in the dip/flat zone.
+    universe = []
+    for it in items:
+        sym = (it.get("symbol") or "").upper()
+        if sym in MAJOR_SYMBOLS or it.get("address") in CASH_MINTS:
+            continue
+        chg = it.get("price_change_1h_percent")
+        if chg is None or chg > cfg["max_change_1h"]:
+            continue
+        universe.append(it)
+
+    out = []
+    charted = 0
+    for it in universe[:cfg["candles_checked"]]:
+        addr, sym = it.get("address", ""), it.get("symbol") or "?"
+        df = fetch_candles_15m(client, addr)
+        if df is None:
+            continue
+        charted += 1
+        roadmap = roadmap_event_within(sym, addr)
+        signal, gates = check_bb_bounce_signal(df, has_roadmap=bool(roadmap))
+        if not signal:
+            continue
+        # Transaction review — only for tokens passing the indicator gates.
+        flow = review_transactions(client, addr)
+        if not flow or flow["buy_volume_pct"] < cfg["min_buy_volume_pct"]:
+            continue
+        meta = {
+            "gates": gates,
+            "flow": flow,
+            "patterns": detect_patterns(df),
+            "change_1h": round(it.get("price_change_1h_percent") or 0, 1),
+        }
+        if roadmap:
+            meta["roadmap"] = roadmap
+        out.append({
+            "address": addr,
+            "symbol": sym,
+            "price": float(df["close"].iloc[-1]),
+            "meta": meta,
+        })
+        time.sleep(0.2)
+    print(f"[bb_bounce] {len(universe)} trending tokens in dip zone, "
+          f"{charted} charts reviewed, {len(out)} signals")
+    return out
 
 
 def market_breadth(client: httpx.Client) -> tuple[float | None, float | None]:
@@ -370,10 +620,12 @@ def scan_cycle() -> dict:
         # --- scan and open ---
         fresh = scan_fresh_listings(client)
         breakouts, n_breakout_candidates = scan_breakouts(client)
+        bounces = scan_bb_bounce(client)
 
         candidates = {
             "fresh_listing": fresh,
             "breakout": breakouts,
+            "bb_bounce": bounces,
         }
         for strategy, cands in candidates.items():
             cfg = STRATEGIES[strategy]
