@@ -107,6 +107,17 @@ SNIPER_BB_BOUNCE = {
 }
 ROADMAP_SIGNAL_DAYS = 14            # roadmap event within N days = a signal
 
+# --- Token safety gate (token_safety.py, Birdeye token_security) ---
+# Every shadow entry is checked for honeypot mechanics (non-transferable,
+# freeze authority, >5% transfer fee, fake-token flag = always blocked) and a
+# 0-100 risk score (mint authority, holder concentration, creator holdings,
+# mutable metadata). Entries above the max score are skipped.
+SAFETY_MAX_SCORE = 50.0             # breakout / bb_bounce / whale_trace
+# Fresh listings are minutes old, so top-10 concentration is naturally high;
+# a stricter cap would block the whole strategy. Honeypot hard-blocks still
+# apply in full.
+SAFETY_MAX_SCORE_FRESH = 80.0
+
 # Strategy B: breakouts — established-enough tokens accelerating right now.
 # The +25%..+300% band deliberately excludes launch-pump garbage (+60,000%).
 SNIPER_BREAKOUT = {

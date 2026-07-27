@@ -46,6 +46,7 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import telegram_notifier  # noqa: E402
 from whale_config import (  # noqa: E402
+    SAFETY_MAX_SCORE,
     SHADOW_BREAK_EVEN_TRIGGER_PCT,
     SHADOW_TAKE_INITIAL_MULT,
     WHALE_TRACE_CULL_MIN_CLOSED,
@@ -61,6 +62,7 @@ from whale_config import (  # noqa: E402
     WHALE_TRACE_SLIPPAGE_PCT,
     WHALE_TRACE_STOP_LOSS_PCT,
 )
+from token_safety import is_safe_to_buy  # noqa: E402
 
 SLIP = WHALE_TRACE_SLIPPAGE_PCT / 100.0
 
@@ -427,6 +429,14 @@ def trace_cycle() -> dict:
                     if market > whale_fill * WHALE_TRACE_MAX_CHASE_MULT:
                         # Token already ran away from the whale's fill — a real
                         # copier is too late. Don't chase.
+                        continue
+                    safe, safety = is_safe_to_buy(
+                        client, addr, sym, max_score=SAFETY_MAX_SCORE)
+                    if not safe:
+                        reason = ("no security data" if safety is None
+                                  else "; ".join(safety["flags"]) or
+                                  f"score {safety['score']:.0f}")
+                        print(f"  [safety] BLOCKED {sym}: {reason}")
                         continue
                     if open_shadow(conn, wallet, addr, sym, market, whale_fill,
                                    usd, ts_, tx):

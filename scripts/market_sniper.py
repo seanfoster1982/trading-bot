@@ -57,6 +57,8 @@ from compute_indicators import (  # noqa: E402
 )
 from whale_config import (  # noqa: E402
     ROADMAP_SIGNAL_DAYS,
+    SAFETY_MAX_SCORE,
+    SAFETY_MAX_SCORE_FRESH,
     SHADOW_BREAK_EVEN_TRIGGER_PCT,
     SHADOW_TAKE_INITIAL_MULT,
     SNIPER_BB_BOUNCE,
@@ -69,6 +71,7 @@ from whale_config import (  # noqa: E402
     SNIPER_SLIPPAGE_PCT,
 )
 from whale_trace import CASH_MINTS, fetch_price, fetch_prices  # noqa: E402
+from token_safety import is_safe_to_buy  # noqa: E402
 
 load_dotenv(dotenv_path=ROOT / ".env")
 
@@ -637,9 +640,22 @@ def scan_cycle() -> dict:
                     break
                 if not c["address"] or is_blocked(conn, strategy, c["address"]):
                     continue
+                max_score = (SAFETY_MAX_SCORE_FRESH if strategy == "fresh_listing"
+                             else SAFETY_MAX_SCORE)
+                safe, safety = is_safe_to_buy(
+                    client, c["address"], c["symbol"], max_score=max_score)
+                if not safe:
+                    reason = ("no security data" if safety is None
+                              else "; ".join(safety["flags"]) or
+                              f"score {safety['score']:.0f}")
+                    print(f"  [safety] BLOCKED {c['symbol']} ({strategy}): {reason}")
+                    continue
                 price = c.get("price") or fetch_price(client, c["address"])
                 if not price:
                     continue
+                c["meta"]["safety_score"] = safety["score"]
+                if safety["flags"]:
+                    c["meta"]["safety_flags"] = safety["flags"]
                 opens.append(open_shadow(
                     conn, strategy, c["address"], c["symbol"], price, c["meta"]))
                 opened_this_cycle += 1

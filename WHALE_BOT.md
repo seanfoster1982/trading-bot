@@ -41,6 +41,36 @@ prices that exist for milliseconds). Whale Trace measures what YOU would make:
 Legacy fill-price shadows (the "+$3.5M" era) are kept in the DB as
 `entry_mode IS NULL` but excluded from all stats.
 
+## Token safety gate (`scripts/token_safety.py`)
+
+Every shadow entry — whale trace, fresh_listing, breakout, bb_bounce — is
+screened through Birdeye's `token_security` data before opening. This is the
+automated version of manually vetting a token on Solscan. On Solana there is
+no per-token contract bytecode to audit (tokens are instances of the standard
+SPL program), so the rug/honeypot surface is the mint's *configuration*:
+
+**Hard blocks** (never bought, regardless of score):
+- Non-transferable token — can buy, can never sell (pure honeypot)
+- Freeze authority active — dev can freeze your wallet after purchase
+- Transfer fee > 5% (token-2022 tax honeypot)
+- Birdeye fake-token / impersonation flag
+
+**Scored risks** (0-100; entries above the cap are skipped):
+- Mint authority active (+40) — dev can print unlimited supply
+- Creator still holds >30% of supply (+35, slow-rug) or >5% (+15)
+- Top-10 holder concentration excluding LPs (+10 to +30)
+- Transfer fee 1-5% (+15), mutable metadata (+10), opaque token-2022 (+10)
+- Jupiter strict-list membership (-15, externally vetted)
+
+Caps: 50 for breakout/bb_bounce/whale trace, 80 for fresh listings (a
+minutes-old token always has concentrated holders; honeypot hard-blocks still
+apply in full). Results cache for 6h in the `token_safety` table. Manual check
+of any token: `python scripts/token_safety.py <mint_address>`.
+
+What this can't catch: LP pulls by non-creator wallets, coordinated multi-
+wallet dumps, and social-engineering rugs. Deeper LP-lock data would need the
+RugCheck.xyz API (future enhancement).
+
 ## Market Sniper (`scripts/market_sniper.py`)
 
 Two additional shadow strategies plus market-wide analysis, same honest
