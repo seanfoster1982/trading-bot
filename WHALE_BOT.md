@@ -75,6 +75,14 @@ Scored risks:
 - Best-effort: if RugCheck is down the gate runs on Layer 1 alone
   (Birdeye down = block; no data, no trade)
 
+**Layer 3 (optional) — Token Sniffer (paid API):**
+Activates automatically if `TOKENSNIFFER_API_KEY` is added to `.env`
+(their API is paid; the free website is CAPTCHA-gated and can't be
+automated). Unique adds over the free layers: a similarity database of
+known scam contracts (hard block on match) and a direct sell simulation
+(hard block if a sell fails — definitive honeypot proof). Low Token
+Sniffer safety scores add +15/+30 to our risk score.
+
 Caps: 50 for breakout/bb_bounce/whale trace, 80 for fresh listings. Results
 cache for 6h in the `token_safety` table. Manual audit of any token:
 `python scripts/token_safety.py <mint_address>`.

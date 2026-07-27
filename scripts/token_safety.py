@@ -31,6 +31,14 @@ LAYER 2 — liquidity & insider audit (RugCheck.xyz public API):
   RugCheck is best-effort: if their API is down we proceed on Layer 1 alone
   (Birdeye unavailable always blocks — no data, no trade).
 
+LAYER 3 (optional) — Token Sniffer (paid API; set TOKENSNIFFER_API_KEY):
+  Hard blocks:
+    - Flagged as matching a known scam (their contract-similarity database)
+    - Sell simulation fails (direct honeypot test)
+  Scored risks:
+    - Token Sniffer safety score < 30/100 (+30) or < 60/100 (+15)
+  Silently skipped when no API key is configured.
+
 Context on Solana "contract review": SPL tokens are instances of the standard
 token program, so there is no custom bytecode to audit per token (unlike EVM,
 where tools like SolidityScan scan each token's Solidity source). The
@@ -66,6 +74,10 @@ DB_PATH = ROOT / "data" / "memecoins.db"
 BIRDEYE_BASE = "https://public-api.birdeye.so"
 BIRDEYE_KEY = os.getenv("BIRDEYE_API_KEY", "")
 RUGCHECK_BASE = "https://api.rugcheck.xyz/v1"
+# Optional third layer — Token Sniffer (paid API, Solana chain id 101).
+# Activates automatically when TOKENSNIFFER_API_KEY is added to .env.
+TOKENSNIFFER_BASE = "https://tokensniffer.com/api/v2"
+TOKENSNIFFER_KEY = os.getenv("TOKENSNIFFER_API_KEY", "")
 
 CACHE_TTL_SEC = 6 * 3600
 HARD_BLOCK_FEE_BPS = 500  # >5% transfer fee
@@ -231,6 +243,62 @@ def evaluate_rugcheck(rep: dict) -> tuple[float, list[str], bool]:
     return score, flags, hard_block
 
 
+def fetch_tokensniffer(client: httpx.Client, address: str) -> dict | None:
+    """Pull a Token Sniffer report (requires paid TOKENSNIFFER_API_KEY)."""
+    if not TOKENSNIFFER_KEY:
+        return None
+    try:
+        r = client.get(
+            f"{TOKENSNIFFER_BASE}/tokens/101/{address}",
+            params={"apikey": TOKENSNIFFER_KEY, "include_metrics": "true",
+                    "include_tests": "true"},
+            headers={"accept": "application/json"},
+            timeout=25.0,
+        )
+        if r.status_code != 200:
+            return None
+        data = r.json() or {}
+        # Fresh tokens queue for analysis; a pending report has no verdict yet.
+        if data.get("status") == "pending":
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def evaluate_tokensniffer(rep: dict) -> tuple[float, list[str], bool]:
+    """Return (score, flags, hard_block) from a Token Sniffer report.
+
+    Token Sniffer scores 0-100 where HIGHER = SAFER (inverse of ours).
+    Its unique value over the other layers: sell simulation (actual honeypot
+    test) and a similarity database of known scam contracts.
+    """
+    score = 0.0
+    flags: list[str] = []
+    hard_block = False
+
+    if rep.get("is_flagged"):
+        flags.append("TOKENSNIFFER_FLAGGED: matches a known scam")
+        hard_block = True
+
+    swap = rep.get("swap_simulation") or {}
+    if swap.get("is_sellable") is False:
+        flags.append("TOKENSNIFFER_HONEYPOT: sell simulation failed")
+        hard_block = True
+
+    ts_score = rep.get("score")
+    if ts_score is not None:
+        ts_score = float(ts_score)
+        if ts_score < 30:
+            score += 30
+            flags.append(f"TOKENSNIFFER_LOW_SCORE: {ts_score:.0f}/100 (100=safe)")
+        elif ts_score < 60:
+            score += 15
+            flags.append(f"TOKENSNIFFER_MID_SCORE: {ts_score:.0f}/100 (100=safe)")
+
+    return score, flags, hard_block
+
+
 def check_token(client: httpx.Client, address: str, symbol: str = "?",
                 use_cache: bool = True) -> dict | None:
     """Full two-layer audit with caching. Returns dict or None if the primary
@@ -261,6 +329,13 @@ def check_token(client: httpx.Client, address: str, symbol: str = "?",
             hard_block = hard_block or rc_hard
         else:
             flags.append("RUGCHECK_UNAVAILABLE: LP/insider audit skipped")
+
+        ts = fetch_tokensniffer(client, address)
+        if ts is not None:
+            ts_score, ts_flags, ts_hard = evaluate_tokensniffer(ts)
+            score = min(100.0, score + ts_score)
+            flags.extend(ts_flags)
+            hard_block = hard_block or ts_hard
 
         conn.execute("""
             INSERT OR REPLACE INTO token_safety
