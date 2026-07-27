@@ -49,6 +49,8 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import telegram_notifier  # noqa: E402
 from whale_config import (  # noqa: E402
+    SHADOW_BREAK_EVEN_TRIGGER_PCT,
+    SHADOW_TAKE_INITIAL_MULT,
     SNIPER_BREAKOUT,
     SNIPER_ENABLED,
     SNIPER_FRESH,
@@ -95,6 +97,16 @@ def init_db() -> None:
         CREATE INDEX IF NOT EXISTS idx_sniper_open
         ON sniper_trades(strategy, address, closed_at)
     """)
+    # Money-management columns: initial-out at 2x + break-even tracking.
+    for ddl in (
+        "ALTER TABLE sniper_trades ADD COLUMN took_initial_at INTEGER",
+        "ALTER TABLE sniper_trades ADD COLUMN initial_out_usd REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE sniper_trades ADD COLUMN peak_pnl_pct REAL NOT NULL DEFAULT 0",
+    ):
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.execute("""
         CREATE TABLE IF NOT EXISTS market_pulse (
             timestamp INTEGER PRIMARY KEY,
@@ -263,11 +275,13 @@ def open_shadow(conn: sqlite3.Connection, strategy: str, addr: str, sym: str,
 def close_shadow(conn: sqlite3.Connection, trade_id: int, price: float,
                  reason: str) -> dict:
     row = conn.execute("""
-        SELECT strategy, symbol, entry_price, shadow_size_usd, tokens_held
+        SELECT strategy, symbol, entry_price, shadow_size_usd, tokens_held,
+               initial_out_usd
         FROM sniper_trades WHERE id = ?
     """, (trade_id,)).fetchone()
-    strategy, sym, entry, size, tokens = row
-    pnl = tokens * price - size
+    strategy, sym, entry, size, tokens, initial_out = row
+    # Total P&L includes any principal already taken out at 2x.
+    pnl = (initial_out or 0) + tokens * price - size
     pnl_pct = (pnl / size * 100) if size else 0.0
     conn.execute("""
         UPDATE sniper_trades
@@ -277,6 +291,72 @@ def close_shadow(conn: sqlite3.Connection, trade_id: int, price: float,
     """, (int(time.time()), price, reason, pnl, pnl_pct, trade_id))
     return {"strategy": strategy, "symbol": sym, "pnl_usd": pnl,
             "pnl_pct": pnl_pct, "reason": reason}
+
+
+def take_initial_out(conn: sqlite3.Connection, trade_id: int,
+                     exit_price: float) -> dict:
+    """Sell just enough tokens (at exit_price, slippage included) to recover
+    the initial stake. Remaining tokens ride risk-free."""
+    row = conn.execute("""
+        SELECT strategy, symbol, shadow_size_usd, tokens_held
+        FROM sniper_trades WHERE id = ?
+    """, (trade_id,)).fetchone()
+    strategy, sym, size, tokens = row
+    tokens_sold = size / exit_price
+    remaining = tokens - tokens_sold
+    conn.execute("""
+        UPDATE sniper_trades
+        SET tokens_held = ?, took_initial_at = ?, initial_out_usd = ?
+        WHERE id = ?
+    """, (remaining, int(time.time()), size, trade_id))
+    return {"strategy": strategy, "symbol": sym, "recovered_usd": size,
+            "runner_tokens": remaining, "price": exit_price}
+
+
+def mark_open_to_market(conn: sqlite3.Connection, prices: dict[str, float],
+                        now: int) -> tuple[list[dict], list[dict]]:
+    """Apply the exit ladder to all open shadows. Returns (derisks, closes).
+
+    Ladder, in order:
+      1. Value >= 2x stake and initial not yet out -> sell back the stake,
+         remainder rides risk-free.
+      2. Initial not out and P&L <= -stop_pct -> STOP_LOSS.
+      3. Initial not out, position peaked above the break-even trigger and
+         fell back to flat -> BREAK_EVEN_STOP (a winner never becomes a loser).
+      4. Past max hold -> MAX_HOLD.
+    """
+    derisks: list[dict] = []
+    closes: list[dict] = []
+    open_rows = conn.execute("""
+        SELECT id, strategy, address, opened_at, shadow_size_usd, tokens_held,
+               took_initial_at, initial_out_usd, peak_pnl_pct
+        FROM sniper_trades WHERE closed_at IS NULL
+    """).fetchall()
+    for (trade_id, strategy, addr, opened_at, size, tokens,
+         took_initial, initial_out, peak) in open_rows:
+        market = prices.get(addr)
+        if not market:
+            continue
+        cfg = STRATEGIES[strategy]
+        exit_price = market * (1 - SLIP)
+        pnl_pct = ((initial_out or 0) + tokens * exit_price - size) / size * 100
+
+        if pnl_pct > (peak or 0):
+            conn.execute("UPDATE sniper_trades SET peak_pnl_pct = ? WHERE id = ?",
+                         (pnl_pct, trade_id))
+            peak = pnl_pct
+
+        if not took_initial and tokens * exit_price >= size * SHADOW_TAKE_INITIAL_MULT:
+            derisks.append(take_initial_out(conn, trade_id, exit_price))
+            continue
+        if not took_initial and pnl_pct <= -cfg["stop_pct"]:
+            closes.append(close_shadow(conn, trade_id, exit_price, "STOP_LOSS"))
+        elif (not took_initial and peak >= SHADOW_BREAK_EVEN_TRIGGER_PCT
+                and pnl_pct <= 0):
+            closes.append(close_shadow(conn, trade_id, exit_price, "BREAK_EVEN_STOP"))
+        elif opened_at < now - cfg["max_hold_hours"] * 3600:
+            closes.append(close_shadow(conn, trade_id, exit_price, "MAX_HOLD"))
+    return derisks, closes
 
 
 def scan_cycle() -> dict:
@@ -314,24 +394,12 @@ def scan_cycle() -> dict:
             conn.commit()
 
         # --- mark open shadows to market ---
-        open_rows = conn.execute("""
-            SELECT id, strategy, address, opened_at, shadow_size_usd, tokens_held
-            FROM sniper_trades WHERE closed_at IS NULL
-        """).fetchall()
-        prices = fetch_prices(client, list({r[2] for r in open_rows}))
-        for trade_id, strategy, addr, opened_at, size, tokens in open_rows:
-            market = prices.get(addr)
-            if not market:
-                continue
-            cfg = STRATEGIES[strategy]
-            exit_price = market * (1 - SLIP)
-            pnl_pct = (tokens * exit_price - size) / size * 100
-            if pnl_pct <= -cfg["stop_pct"]:
-                closes.append(close_shadow(conn, trade_id, exit_price, "STOP_LOSS"))
-            elif pnl_pct >= cfg["tp_pct"]:
-                closes.append(close_shadow(conn, trade_id, exit_price, "TAKE_PROFIT"))
-            elif opened_at < now - cfg["max_hold_hours"] * 3600:
-                closes.append(close_shadow(conn, trade_id, exit_price, "MAX_HOLD"))
+        addrs = [r[0] for r in conn.execute(
+            "SELECT DISTINCT address FROM sniper_trades WHERE closed_at IS NULL"
+        ).fetchall()]
+        prices = fetch_prices(client, addrs)
+        derisks, mtm_closes = mark_open_to_market(conn, prices, now)
+        closes.extend(mtm_closes)
         conn.commit()
 
         # --- market pulse ---
@@ -345,7 +413,7 @@ def scan_cycle() -> dict:
         conn.commit()
 
     conn.close()
-    return {"opens": opens, "closes": closes,
+    return {"opens": opens, "closes": closes, "derisks": derisks,
             "pulse": {"median_1h": median_chg, "pct_gainers": pct_gainers,
                       "fresh_seen": len(fresh)}}
 
@@ -369,12 +437,17 @@ def build_report() -> str:
         """, (strategy,)).fetchone()
         n = r["n"] or 0
         wr = (100 * (r["wins"] or 0) / n) if n else 0.0
-        n_open = conn.execute("""
-            SELECT COUNT(*) FROM sniper_trades
+        n_open, n_free = conn.execute("""
+            SELECT COUNT(*),
+                   SUM(CASE WHEN took_initial_at IS NOT NULL THEN 1 ELSE 0 END)
+            FROM sniper_trades
             WHERE strategy = ? AND closed_at IS NULL
-        """, (strategy,)).fetchone()[0]
+        """, (strategy,)).fetchone()
+        open_txt = f"{n_open} open"
+        if n_free:
+            open_txt += f" ({n_free} risk-free)"
         lines.append(f"  {strategy}: {n} closed, {wr:.0f}% WR, "
-                     f"{r['total']:+.2f} (avg {r['avg_pct']:+.1f}%), {n_open} open")
+                     f"{r['total']:+.2f} (avg {r['avg_pct']:+.1f}%), {open_txt}")
 
     pulse = conn.execute("""
         SELECT * FROM market_pulse ORDER BY timestamp DESC LIMIT 1
@@ -396,6 +469,13 @@ def build_report() -> str:
 def notify(summary: dict) -> None:
     if not telegram_notifier.is_configured():
         return
+    for d in summary.get("derisks", []):
+        telegram_notifier.send(
+            f"<b>SNIPER — INITIAL OUT (2x)</b>\n"
+            f"<b>{d['symbol']}</b> ({d['strategy']})\n"
+            f"Recovered ${d['recovered_usd']:.2f} stake @ {d['price']:.10f}\n"
+            f"Remainder rides risk-free."
+        )
     for o in summary["opens"]:
         meta = ", ".join(f"{k}={v}" for k, v in o["meta"].items())
         telegram_notifier.send(
@@ -436,9 +516,13 @@ def main() -> None:
         sys.exit(1)
 
     summary = scan_cycle()
-    print(f"Opens: {len(summary['opens'])}  Closes: {len(summary['closes'])}")
+    print(f"Opens: {len(summary['opens'])}  Closes: {len(summary['closes'])}  "
+          f"Initial-outs: {len(summary['derisks'])}")
     for o in summary["opens"]:
         print(f"  OPEN  [{o['strategy']}] {o['symbol']} @ {o['price']:.10f}  {o['meta']}")
+    for d in summary["derisks"]:
+        print(f"  2X    [{d['strategy']}] {d['symbol']} initial ${d['recovered_usd']:.2f} "
+              f"out, runner rides free")
     for c in summary["closes"]:
         print(f"  CLOSE [{c['strategy']}] {c['symbol']} {c['pnl_usd']:+.2f} ({c['reason']})")
     p = summary["pulse"]

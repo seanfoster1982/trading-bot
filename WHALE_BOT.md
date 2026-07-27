@@ -26,6 +26,18 @@ prices that exist for milliseconds). Whale Trace measures what YOU would make:
 - Exit when the whale sells (at our detection price), at -50% stop, or 24h max hold
 - Wallets with 5+ closed shadows and negative copyable P&L get culled permanently
 
+## Money management (all shadow strategies)
+
+- **2x rule** — when a position's value doubles, the bot sells enough to
+  recover the full initial stake; the remaining tokens ride risk-free
+  ("initial out" Telegram alert). The position can no longer lose money.
+- **Break-even stop** — if a position was up 30%+ and falls back to flat, it
+  closes at break-even instead of turning into a loser.
+- **Hard stops** — -50% (whale trace, fresh listings), -30% (breakouts).
+- **Gap risk caveat** — with 15-min polling, a token that rugs between checks
+  is recorded at the real (worse) price. No stop can prevent that; only
+  position sizing can.
+
 Legacy fill-price shadows (the "+$3.5M" era) are kept in the DB as
 `entry_mode IS NULL` but excluded from all stats.
 

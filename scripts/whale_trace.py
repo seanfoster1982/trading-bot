@@ -46,6 +46,8 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import telegram_notifier  # noqa: E402
 from whale_config import (  # noqa: E402
+    SHADOW_BREAK_EVEN_TRIGGER_PCT,
+    SHADOW_TAKE_INITIAL_MULT,
     WHALE_TRACE_CULL_MIN_CLOSED,
     WHALE_TRACE_ENABLED,
     WHALE_TRACE_LEADERBOARD_REFRESH_HOURS,
@@ -123,6 +125,9 @@ def init_db() -> None:
         "ALTER TABLE whale_trace_trades ADD COLUMN entry_mode TEXT",
         "ALTER TABLE whale_trace_trades ADD COLUMN whale_fill_price REAL",
         "ALTER TABLE whale_wallets ADD COLUMN culled INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE whale_trace_trades ADD COLUMN took_initial_at INTEGER",
+        "ALTER TABLE whale_trace_trades ADD COLUMN initial_out_usd REAL NOT NULL DEFAULT 0",
+        "ALTER TABLE whale_trace_trades ADD COLUMN peak_pnl_pct REAL NOT NULL DEFAULT 0",
     ):
         try:
             conn.execute(ddl)
@@ -314,11 +319,13 @@ def open_shadow(conn: sqlite3.Connection, wallet: str, addr: str, sym: str,
 def close_shadow(conn: sqlite3.Connection, trade_id: int, price: float,
                  reason: str, ts: int, tx: str | None = None) -> dict:
     row = conn.execute("""
-        SELECT entry_price, shadow_size_usd, tokens_held, symbol, wallet
+        SELECT entry_price, shadow_size_usd, tokens_held, symbol, wallet,
+               initial_out_usd
         FROM whale_trace_trades WHERE id = ?
     """, (trade_id,)).fetchone()
-    entry, size, tokens, sym, wallet = row
-    pnl = tokens * price - size
+    entry, size, tokens, sym, wallet, initial_out = row
+    # Total P&L includes any principal already taken out at 2x.
+    pnl = (initial_out or 0) + tokens * price - size
     pnl_pct = (pnl / size * 100) if size else 0.0
     conn.execute("""
         UPDATE whale_trace_trades
@@ -328,6 +335,25 @@ def close_shadow(conn: sqlite3.Connection, trade_id: int, price: float,
     """, (ts, price, reason, tx, pnl, pnl_pct, trade_id))
     return {"symbol": sym, "wallet": wallet, "pnl_usd": pnl, "pnl_pct": pnl_pct,
             "reason": reason}
+
+
+def take_initial_out(conn: sqlite3.Connection, trade_id: int,
+                     exit_price: float) -> dict:
+    """Sell just enough tokens (at exit_price, slippage included) to recover
+    the initial stake. Remaining tokens ride risk-free."""
+    row = conn.execute("""
+        SELECT symbol, wallet, shadow_size_usd, tokens_held
+        FROM whale_trace_trades WHERE id = ?
+    """, (trade_id,)).fetchone()
+    sym, wallet, size, tokens = row
+    tokens_sold = size / exit_price
+    conn.execute("""
+        UPDATE whale_trace_trades
+        SET tokens_held = ?, took_initial_at = ?, initial_out_usd = ?
+        WHERE id = ?
+    """, (tokens - tokens_sold, int(time.time()), size, trade_id))
+    return {"symbol": sym, "wallet": wallet, "recovered_usd": size,
+            "price": exit_price}
 
 
 def cull_bad_wallets(conn: sqlite3.Connection) -> list[str]:
@@ -352,6 +378,7 @@ def trace_cycle() -> dict:
     now = int(time.time())
     opens: list[dict] = []
     closes: list[dict] = []
+    derisks: list[dict] = []
     conn = sqlite3.connect(DB_PATH)
     with httpx.Client() as client:
         refresh_leaderboard_if_stale(client, conn)
@@ -423,23 +450,43 @@ def trace_cycle() -> dict:
             conn.commit()
             time.sleep(0.25)
 
-        # Mark open market-mode shadows to market: stop-loss and max-hold.
+        # Mark open market-mode shadows to market. Exit ladder:
+        #   1. 2x -> take initial out, remainder rides risk-free
+        #   2. stop-loss (only while initial still at risk)
+        #   3. break-even stop: peaked above trigger, fell back to flat
+        #   4. max hold
         open_rows = conn.execute("""
-            SELECT id, address, opened_at, entry_price, shadow_size_usd, tokens_held
+            SELECT id, address, opened_at, shadow_size_usd, tokens_held,
+                   took_initial_at, initial_out_usd, peak_pnl_pct
             FROM whale_trace_trades
             WHERE closed_at IS NULL AND entry_mode = 'market'
         """).fetchall()
         prices = fetch_prices(client, list({r[1] for r in open_rows}))
         max_hold_cutoff = now - WHALE_TRACE_MAX_HOLD_HOURS * 3600
-        for trade_id, addr, opened_at, entry, size, tokens in open_rows:
+        for (trade_id, addr, opened_at, size, tokens,
+             took_initial, initial_out, peak) in open_rows:
             market = prices.get(addr)
             if not market:
                 continue
             exit_price = market * (1 - SLIP)
-            pnl_pct = (tokens * exit_price - size) / size * 100
-            if pnl_pct <= -WHALE_TRACE_STOP_LOSS_PCT:
+            pnl_pct = ((initial_out or 0) + tokens * exit_price - size) / size * 100
+
+            if pnl_pct > (peak or 0):
+                conn.execute(
+                    "UPDATE whale_trace_trades SET peak_pnl_pct = ? WHERE id = ?",
+                    (pnl_pct, trade_id))
+                peak = pnl_pct
+
+            if not took_initial and tokens * exit_price >= size * SHADOW_TAKE_INITIAL_MULT:
+                derisks.append(take_initial_out(conn, trade_id, exit_price))
+                continue
+            if not took_initial and pnl_pct <= -WHALE_TRACE_STOP_LOSS_PCT:
                 closes.append(close_shadow(
                     conn, trade_id, exit_price, "STOP_LOSS", now))
+            elif (not took_initial and peak >= SHADOW_BREAK_EVEN_TRIGGER_PCT
+                    and pnl_pct <= 0):
+                closes.append(close_shadow(
+                    conn, trade_id, exit_price, "BREAK_EVEN_STOP", now))
             elif opened_at < max_hold_cutoff:
                 closes.append(close_shadow(
                     conn, trade_id, exit_price, "MAX_HOLD_24H", now))
@@ -452,7 +499,7 @@ def trace_cycle() -> dict:
         conn.commit()
 
     conn.close()
-    return {"opens": opens, "closes": closes}
+    return {"opens": opens, "closes": closes, "derisks": derisks}
 
 
 # --------------------------------------------------------------- reporting --
@@ -495,7 +542,8 @@ def build_report() -> str:
                          f"{w_wr:.0f}% WR, {r['total']:+.2f}")
 
     open_rows = conn.execute("""
-        SELECT symbol, wallet, opened_at, whale_buy_usd FROM whale_trace_trades
+        SELECT symbol, wallet, opened_at, whale_buy_usd, took_initial_at
+        FROM whale_trace_trades
         WHERE closed_at IS NULL AND entry_mode = 'market'
         ORDER BY opened_at DESC
     """).fetchall()
@@ -504,8 +552,9 @@ def build_report() -> str:
         lines.append(f"<b>Open shadows ({len(open_rows)})</b>")
         for r in open_rows[:8]:
             age_h = (time.time() - r["opened_at"]) / 3600
+            tag = " [risk-free]" if r["took_initial_at"] else ""
             lines.append(f"  {r['symbol']} via {r['wallet'][:8]}.. "
-                         f"(whale put ${r['whale_buy_usd']:,.0f}, {age_h:.1f}h ago)")
+                         f"(whale put ${r['whale_buy_usd']:,.0f}, {age_h:.1f}h ago){tag}")
     else:
         lines.append("<b>Open shadows:</b> none")
 
@@ -530,6 +579,13 @@ def build_report() -> str:
 def notify(summary: dict) -> None:
     if not telegram_notifier.is_configured():
         return
+    for d in summary.get("derisks", []):
+        telegram_notifier.send(
+            f"<b>WHALE TRACE — INITIAL OUT (2x)</b>\n"
+            f"<b>{d['symbol']}</b> via {d['wallet'][:8]}..\n"
+            f"Recovered ${d['recovered_usd']:.2f} stake @ {d['price']:.10f}\n"
+            f"Remainder rides risk-free."
+        )
     for o in summary["opens"]:
         telegram_notifier.send(
             f"<b>WHALE TRACE — wallet bought</b>\n"
@@ -570,9 +626,12 @@ def main() -> None:
         sys.exit(1)
 
     summary = trace_cycle()
-    print(f"\nOpens: {len(summary['opens'])}  Closes: {len(summary['closes'])}")
+    print(f"\nOpens: {len(summary['opens'])}  Closes: {len(summary['closes'])}  "
+          f"Initial-outs: {len(summary['derisks'])}")
     for o in summary["opens"]:
         print(f"  OPEN  {o['symbol']} via {o['wallet'][:8]}.. (whale ${o['whale_usd']:,.0f})")
+    for d in summary["derisks"]:
+        print(f"  2X    {d['symbol']} initial ${d['recovered_usd']:.2f} out, runner rides free")
     for c in summary["closes"]:
         print(f"  CLOSE {c['symbol']} {c['pnl_usd']:+.2f} ({c['reason']})")
     notify(summary)
