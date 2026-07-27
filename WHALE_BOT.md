@@ -129,6 +129,26 @@ infrastructure — no polling bot can compete there. These strategies test the
 edges reachable at 15-minute detection speed, and the shadow stats will show
 whether they exist. Early evidence: fresh tokens can drop 98% between polls.
 
+## LIVE trading (`scripts/live_trader.py`) — REAL MONEY
+
+Authorized 2026-07-26: a one-shot **$25 lifetime budget**. The executor runs
+every 15 min (TradingBotLive) and only buys when ALL of these hold:
+
+- **Signal**: 2+ distinct traced whales bought the same token within 90 min
+  (whale confluence), or a bb_bounce full-checklist entry just fired
+- **Safety**: fresh audit score <= 30 (shadow gate allows 50), no hard blocks
+- **Liquidity**: >= $100k
+- **Wallet funded**: needs trade size + 0.01 SOL fee buffer; if underfunded
+  it stays armed and pings Telegram with the missed candidate
+
+Execution is via Jupiter (quote -> swap -> sign locally -> send; the key
+never leaves the machine, 3% max slippage). Exits are automated: recover the
+initial stake at 2x, -35% hard stop, break-even stop after +30%, 48h max
+hold. Every buy/derisk/close is an audible Telegram alert. State lives in
+the `live_trades` table; once $25 is spent, it manages exits only.
+
+Check anytime: `python scripts/live_trader.py --status`
+
 ## Operation
 
 Three scheduled tasks (register with `scripts\setup_whale_tasks.ps1`):

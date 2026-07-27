@@ -118,6 +118,23 @@ SAFETY_MAX_SCORE = 50.0             # breakout / bb_bounce / whale_trace
 # apply in full.
 SAFETY_MAX_SCORE_FRESH = 80.0
 
+# --- LIVE trading (live_trader.py) — REAL MONEY ---
+# One-shot $25 authorization (user, 2026-07-26). The executor only fires when
+# a candidate passes criteria far stricter than any shadow strategy AND the
+# wallet holds enough SOL. Once the lifetime budget is spent, no more buys.
+LIVE_ENABLED = True
+LIVE_BUDGET_USD = 25.0              # lifetime spend cap across ALL live buys
+LIVE_TRADE_USD = 25.0               # size per position
+LIVE_MAX_OPEN = 1
+LIVE_SAFETY_MAX_SCORE = 30.0        # much stricter than the shadow gate (50)
+LIVE_MIN_LIQUIDITY = 100_000.0
+LIVE_WHALE_CONFLUENCE_MIN = 2       # distinct traced whales buying same token
+LIVE_CONFLUENCE_WINDOW_MIN = 90     # ...within this many minutes
+LIVE_SLIPPAGE_BPS = 300             # 3% max slippage on Jupiter swaps
+LIVE_STOP_PCT = 35.0
+LIVE_MAX_HOLD_HOURS = 48
+LIVE_FEE_BUFFER_SOL = 0.01          # keep for tx fees / rent
+
 # Strategy B: breakouts — established-enough tokens accelerating right now.
 # The +25%..+300% band deliberately excludes launch-pump garbage (+60,000%).
 SNIPER_BREAKOUT = {

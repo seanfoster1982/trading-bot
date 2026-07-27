@@ -11,6 +11,7 @@ $Pyw  = "$Repo\.venv\Scripts\pythonw.exe"
 $Trace  = "$Repo\scripts\whale_trace.py"
 $Sniper = "$Repo\scripts\market_sniper.py"
 $Digest = "$Repo\scripts\bot_report.py"
+$Live   = "$Repo\scripts\live_trader.py"
 
 Write-Host "=== Whale Trace - task setup ===" -ForegroundColor Cyan
 
@@ -31,6 +32,14 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "OK  TradingBotSniper - every 15 minutes" -ForegroundColor Green
 } else {
     Write-Host "FAIL TradingBotSniper" -ForegroundColor Red
+}
+
+schtasks /Delete /TN "TradingBotLive" /F 2>$null
+schtasks /Create /TN "TradingBotLive" /TR "`"$Pyw`" `"$Live`"" /SC MINUTE /MO 15 /F
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "OK  TradingBotLive - every 15 minutes (REAL MONEY, `$25 budget)" -ForegroundColor Green
+} else {
+    Write-Host "FAIL TradingBotLive" -ForegroundColor Red
 }
 
 schtasks /Delete /TN "TradingBotDigest" /F 2>$null
