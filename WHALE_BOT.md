@@ -1,7 +1,8 @@
 # Whale Trace Bot — Realistic Copy-Trading Simulation
 
-Follows the top realized-PnL wallets on Solana (from Birdeye's weekly trader
-leaderboard) and simulates copying their trades at prices a real copier could
+Follows the top realized-PnL wallets on Solana (from Birdeye's 7-day AND
+30-day trader leaderboards — the same data behind Phantom's Explore > Top
+Traders) and simulates copying their trades at prices a real copier could
 actually get. Also runs **Market Sniper** — see below.
 
 ## Why the pivot
@@ -25,6 +26,14 @@ prices that exist for milliseconds). Whale Trace measures what YOU would make:
 - Skips round-trips completed before we could have reacted
 - Exit when the whale sells (at our detection price), at -50% stop, or 24h max hold
 - Wallets with 5+ closed shadows and negative copyable P&L get culled permanently
+- Watchlist merges the 7d and 30d leaderboards (30d stats scaled to weekly
+  rate so both windows compete on the same bar), keeps the top 10
+- **Farming-ring screen (2026-07-26):** overlap analysis of top-trader buys
+  exposed two coordinated rings — 4 wallets that co-bought 15 fresh clone
+  mints (ten named "VORF"), and 2 wallets that co-bought two mints both named
+  "USOX". Their leaderboard PnL is manufactured by pumping their own launches.
+  All 6 are culled permanently. Lesson: tokens "in common" among leaderboard
+  wallets are usually a wash-trading signature, not shared conviction.
 
 ## Money management (all shadow strategies)
 

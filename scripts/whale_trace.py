@@ -145,8 +145,12 @@ def _headers() -> dict:
     return {"X-API-KEY": BIRDEYE_KEY, "x-chain": "solana", "accept": "application/json"}
 
 
-def fetch_leaderboard(client: httpx.Client, pages: int = 10) -> list[dict]:
-    """Weekly top-PnL wallets from Birdeye (10 per page)."""
+def fetch_leaderboard(client: httpx.Client, pages: int = 10,
+                      window: str = "1W") -> list[dict]:
+    """Top-PnL wallets from Birdeye (10 per page). window: 1W or 30d.
+
+    This is the same data behind Phantom's Explore > Top Traders list
+    (Phantom sources token/trader data from Birdeye)."""
     items: list[dict] = []
     for page in range(pages):
         try:
@@ -154,17 +158,17 @@ def fetch_leaderboard(client: httpx.Client, pages: int = 10) -> list[dict]:
                 f"{BIRDEYE_BASE}/trader/gainers-losers",
                 headers=_headers(),
                 params={
-                    "type": "1W", "sort_by": "PnL", "sort_type": "desc",
+                    "type": window, "sort_by": "PnL", "sort_type": "desc",
                     "offset": page * 10, "limit": 10,
                 },
                 timeout=20.0,
             )
             if r.status_code != 200:
-                print(f"[leaderboard] HTTP {r.status_code}: {r.text[:150]}", file=sys.stderr)
+                print(f"[leaderboard {window}] HTTP {r.status_code}: {r.text[:150]}", file=sys.stderr)
                 break
             items.extend(r.json().get("data", {}).get("items", []))
         except Exception as e:
-            print(f"[leaderboard] {type(e).__name__}: {e}", file=sys.stderr)
+            print(f"[leaderboard {window}] {type(e).__name__}: {e}", file=sys.stderr)
             break
         time.sleep(0.25)
     return items
@@ -261,15 +265,27 @@ def refresh_leaderboard_if_stale(client: httpx.Client, conn: sqlite3.Connection)
     if time.time() - last < WHALE_TRACE_LEADERBOARD_REFRESH_HOURS * 3600:
         return
 
-    print("Refreshing whale leaderboard from Birdeye...")
-    items = fetch_leaderboard(client)
+    print("Refreshing whale leaderboard from Birdeye (7d + 30d)...")
     now = int(time.time())
-    qualified = [
-        it for it in items
-        if (it.get("trade_count") or 0) >= WHALE_TRACE_MIN_TRADES_1W
-        and (it.get("realized_pnl") or 0) >= WHALE_TRACE_MIN_REALIZED_PNL
-    ]
-    qualified.sort(key=lambda it: it.get("realized_pnl") or 0, reverse=True)
+    # Merge the 7-day and 30-day boards (Phantom-style Top Traders windows).
+    # 30-day realized PnL is scaled to a weekly rate so both windows compete
+    # on the same qualification bar and sort order.
+    merged: dict[str, dict] = {}
+    for window, scale in (("1W", 1.0), ("30d", 7 / 30)):
+        for it in fetch_leaderboard(client, window=window):
+            w = it.get("address")
+            if not w:
+                continue
+            weekly_pnl = (it.get("realized_pnl") or 0) * scale
+            weekly_trades = (it.get("trade_count") or 0) * scale
+            if (weekly_trades >= WHALE_TRACE_MIN_TRADES_1W
+                    and weekly_pnl >= WHALE_TRACE_MIN_REALIZED_PNL):
+                prev = merged.get(w)
+                if prev is None or weekly_pnl > (prev.get("realized_pnl") or 0):
+                    merged[w] = {**it, "realized_pnl": weekly_pnl,
+                                 "trade_count": int(weekly_trades)}
+    qualified = sorted(merged.values(),
+                       key=lambda it: it.get("realized_pnl") or 0, reverse=True)
     keep = qualified[:WHALE_TRACE_MAX_WALLETS]
 
     # Deactivate wallets that fell off; keep their trade history.
@@ -293,7 +309,7 @@ def refresh_leaderboard_if_stale(client: httpx.Client, conn: sqlite3.Connection)
     # A culled wallet stays culled even if it re-enters the leaderboard.
     conn.execute("UPDATE whale_wallets SET active = 0 WHERE culled = 1")
     conn.commit()
-    print(f"  {len(items)} leaderboard wallets fetched, {len(qualified)} qualified, tracing {len(keep)}")
+    print(f"  {len(merged)} unique wallets qualified across 7d+30d boards, tracing {len(keep)}")
 
 
 def open_shadow(conn: sqlite3.Connection, wallet: str, addr: str, sym: str,
