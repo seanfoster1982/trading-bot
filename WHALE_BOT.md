@@ -43,33 +43,44 @@ Legacy fill-price shadows (the "+$3.5M" era) are kept in the DB as
 
 ## Token safety gate (`scripts/token_safety.py`)
 
-Every shadow entry — whale trace, fresh_listing, breakout, bb_bounce — is
-screened through Birdeye's `token_security` data before opening. This is the
-automated version of manually vetting a token on Solscan. On Solana there is
-no per-token contract bytecode to audit (tokens are instances of the standard
-SPL program), so the rug/honeypot surface is the mint's *configuration*:
+Every shadow entry — whale trace, fresh_listing, breakout, bb_bounce — runs a
+full two-layer token audit before opening. On Solana there is no per-token
+contract bytecode to audit (tokens are instances of the standard SPL program,
+unlike EVM chains where tools like SolidityScan scan Solidity source), so the
+audit covers the three places rugs actually live: mint configuration, holder
+distribution, and liquidity pool status.
 
-**Hard blocks** (never bought, regardless of score):
+**Layer 1 — mint configuration audit (Birdeye `token_security`):**
+
+Hard blocks (never bought, regardless of score):
 - Non-transferable token — can buy, can never sell (pure honeypot)
 - Freeze authority active — dev can freeze your wallet after purchase
 - Transfer fee > 5% (token-2022 tax honeypot)
 - Birdeye fake-token / impersonation flag
 
-**Scored risks** (0-100; entries above the cap are skipped):
+Scored risks:
 - Mint authority active (+40) — dev can print unlimited supply
 - Creator still holds >30% of supply (+35, slow-rug) or >5% (+15)
 - Top-10 holder concentration excluding LPs (+10 to +30)
 - Transfer fee 1-5% (+15), mutable metadata (+10), opaque token-2022 (+10)
 - Jupiter strict-list membership (-15, externally vetted)
 
-Caps: 50 for breakout/bb_bounce/whale trace, 80 for fresh listings (a
-minutes-old token always has concentrated holders; honeypot hard-blocks still
-apply in full). Results cache for 6h in the `token_safety` table. Manual check
-of any token: `python scripts/token_safety.py <mint_address>`.
+**Layer 2 — liquidity & insider audit (RugCheck.xyz public API):**
+- Token already flagged as rugged → hard block
+- Danger-level findings (+15 each, cap +45): LP unlocked, low liquidity,
+  single-holder dominance. Scored rather than hard-blocked because every
+  minutes-old launch trips these — the per-strategy cap decides.
+- Warn-level findings (+5 each, cap +15), e.g. few LP providers
+- Insider wallet network from their transaction-graph analysis (+10)
+- Best-effort: if RugCheck is down the gate runs on Layer 1 alone
+  (Birdeye down = block; no data, no trade)
 
-What this can't catch: LP pulls by non-creator wallets, coordinated multi-
-wallet dumps, and social-engineering rugs. Deeper LP-lock data would need the
-RugCheck.xyz API (future enhancement).
+Caps: 50 for breakout/bb_bounce/whale trace, 80 for fresh listings. Results
+cache for 6h in the `token_safety` table. Manual audit of any token:
+`python scripts/token_safety.py <mint_address>`.
+
+What this still can't catch: coordinated multi-wallet dumps by unlinked
+wallets and social-engineering rugs. No pre-buy scanner can.
 
 ## Market Sniper (`scripts/market_sniper.py`)
 

@@ -1,7 +1,8 @@
-"""Token safety gate — automated Solscan-style due diligence via Birdeye.
+"""Token safety gate — a full automated token audit before ANY shadow entry.
 
-Answers "is this token safe to buy?" before ANY shadow strategy enters:
+Two independent audit layers, both must pass:
 
+LAYER 1 — mint configuration audit (Birdeye token_security):
   Hard blocks (never buy, regardless of score):
     - Non-transferable token (you could buy but never sell — pure honeypot)
     - Freeze authority active (dev can freeze your wallet after you buy)
@@ -17,11 +18,24 @@ Answers "is this token safe to buy?" before ANY shadow strategy enters:
     - Mutable metadata (+10): dev can rebrand the token after launch
     - Jupiter strict-list membership (-15): externally vetted
 
+LAYER 2 — liquidity & insider audit (RugCheck.xyz public API):
+  Hard blocks:
+    - Token already flagged as rugged
+  Scored risks:
+    - Each "danger"-level risk (+15, capped at +45) — e.g. LP unlocked,
+      low liquidity, single-holder dominance. Scored rather than hard-blocked
+      because every minutes-old launch trips these; the per-strategy score cap
+      decides (50 established strategies, 80 fresh listings).
+    - Each "warn"-level risk (+5, capped at +15) — e.g. few LP providers
+    - Insider wallet network detected by their transaction-graph analysis (+10)
+  RugCheck is best-effort: if their API is down we proceed on Layer 1 alone
+  (Birdeye unavailable always blocks — no data, no trade).
+
 Context on Solana "contract review": SPL tokens are instances of the standard
-token program, so there is no custom bytecode to audit per token (unlike EVM).
-The rug/honeypot surface lives in the mint's CONFIGURATION — authorities and
-token-2022 extensions — plus holder distribution. That is exactly what this
-module inspects, and it is the same data Solscan's token page shows.
+token program, so there is no custom bytecode to audit per token (unlike EVM,
+where tools like SolidityScan scan each token's Solidity source). The
+rug/honeypot surface here lives in the mint's CONFIGURATION, holder
+distribution, and LP status — which is exactly what these two layers audit.
 
 Results are cached in the token_safety table (6h TTL).
 
@@ -51,9 +65,17 @@ load_dotenv(dotenv_path=ROOT / ".env")
 DB_PATH = ROOT / "data" / "memecoins.db"
 BIRDEYE_BASE = "https://public-api.birdeye.so"
 BIRDEYE_KEY = os.getenv("BIRDEYE_API_KEY", "")
+RUGCHECK_BASE = "https://api.rugcheck.xyz/v1"
 
 CACHE_TTL_SEC = 6 * 3600
 HARD_BLOCK_FEE_BPS = 500  # >5% transfer fee
+# RugCheck marks "Low Liquidity" / "LP Unlocked" / "high ownership" as danger
+# on virtually every young token, so its findings are SCORED (per-strategy cap
+# decides) rather than hard-blocked; only "already rugged" is absolute.
+RUGCHECK_DANGER_SCORE = 15.0
+RUGCHECK_DANGER_CAP = 45.0
+RUGCHECK_WARN_SCORE = 5.0
+RUGCHECK_WARN_CAP = 15.0
 
 
 def init_db() -> None:
@@ -162,9 +184,57 @@ def evaluate(sec: dict) -> tuple[float, list[str], bool]:
     return min(100.0, score), flags, hard_block
 
 
+def fetch_rugcheck(client: httpx.Client, address: str) -> dict | None:
+    """Pull the full RugCheck report (public, no key). Best-effort."""
+    try:
+        r = client.get(
+            f"{RUGCHECK_BASE}/tokens/{address}/report",
+            headers={"accept": "application/json"},
+            timeout=25.0,
+        )
+        if r.status_code != 200:
+            return None
+        return r.json() or {}
+    except Exception:
+        return None
+
+
+def evaluate_rugcheck(rep: dict) -> tuple[float, list[str], bool]:
+    """Return (score, flags, hard_block) from a RugCheck report."""
+    score = 0.0
+    flags: list[str] = []
+    hard_block = False
+
+    if rep.get("rugged"):
+        flags.append("RUGCHECK_RUGGED: token already flagged as rugged")
+        hard_block = True
+
+    danger_total = 0.0
+    warn_total = 0.0
+    for risk in rep.get("risks") or []:
+        name = risk.get("name") or "unnamed risk"
+        level = (risk.get("level") or "").lower()
+        if level == "danger":
+            danger_total += RUGCHECK_DANGER_SCORE
+            flags.append(f"RUGCHECK_DANGER: {name}")
+        elif level == "warn":
+            warn_total += RUGCHECK_WARN_SCORE
+            flags.append(f"RUGCHECK_WARN: {name}")
+    score += min(danger_total, RUGCHECK_DANGER_CAP)
+    score += min(warn_total, RUGCHECK_WARN_CAP)
+
+    insiders = int(rep.get("graphInsidersDetected") or 0)
+    if insiders > 0:
+        score += 10
+        flags.append(f"INSIDER_NETWORK: {insiders} linked insider wallets detected")
+
+    return score, flags, hard_block
+
+
 def check_token(client: httpx.Client, address: str, symbol: str = "?",
                 use_cache: bool = True) -> dict | None:
-    """Full safety check with caching. Returns dict or None if data unavailable."""
+    """Full two-layer audit with caching. Returns dict or None if the primary
+    (Birdeye) layer is unavailable. RugCheck is merged in when reachable."""
     init_db()
     conn = sqlite3.connect(DB_PATH)
     try:
@@ -182,6 +252,16 @@ def check_token(client: httpx.Client, address: str, symbol: str = "?",
         if sec is None:
             return None
         score, flags, hard_block = evaluate(sec)
+
+        rc = fetch_rugcheck(client, address)
+        if rc is not None:
+            rc_score, rc_flags, rc_hard = evaluate_rugcheck(rc)
+            score = min(100.0, score + rc_score)
+            flags.extend(rc_flags)
+            hard_block = hard_block or rc_hard
+        else:
+            flags.append("RUGCHECK_UNAVAILABLE: LP/insider audit skipped")
+
         conn.execute("""
             INSERT OR REPLACE INTO token_safety
             (address, symbol, score, flags, hard_block, checked_at)
