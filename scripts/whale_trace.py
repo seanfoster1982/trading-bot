@@ -40,6 +40,10 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
+# Memecoin symbols can contain arbitrary Unicode; don't let cp1252 consoles crash.
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import telegram_notifier  # noqa: E402
 from whale_config import (  # noqa: E402
     WHALE_TRACE_CULL_MIN_CLOSED,

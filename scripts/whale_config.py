@@ -60,3 +60,35 @@ WHALE_TRACE_SLIPPAGE_PCT = 2.0      # paid on entry and exit
 WHALE_TRACE_STOP_LOSS_PCT = 50.0    # close shadow if down this much
 WHALE_TRACE_MAX_CHASE_MULT = 2.0    # skip entry if market already 2x whale's fill
 WHALE_TRACE_CULL_MIN_CLOSED = 5     # closed shadows before a wallet can be culled
+
+# --- Market Sniper (separate shadow strategies + market-wide pulse) ---
+# Same honest accounting as Whale Trace: entries at detection-time price with
+# slippage, own tables only, never touches real/paper trading.
+SNIPER_ENABLED = True
+SNIPER_SHADOW_SIZE_USD = 25.0
+SNIPER_SLIPPAGE_PCT = 3.0           # fresh tokens are thin; assume worse fills
+SNIPER_REENTRY_COOLDOWN_HOURS = 24  # don't re-buy a token right after closing it
+SNIPER_MAX_NEW_PER_CYCLE = 3        # per strategy, avoids flooding on hot markets
+
+# Strategy A: fresh listings — tokens minutes old with real liquidity.
+SNIPER_FRESH = {
+    "min_liquidity": 10_000.0,
+    "max_age_minutes": 45,
+    "stop_pct": 50.0,
+    "tp_pct": 100.0,
+    "max_hold_hours": 12,
+    "max_open": 8,
+}
+
+# Strategy B: breakouts — established-enough tokens accelerating right now.
+# The +25%..+300% band deliberately excludes launch-pump garbage (+60,000%).
+SNIPER_BREAKOUT = {
+    "min_liquidity": 75_000.0,
+    "min_volume_1h": 50_000.0,
+    "min_change_1h": 25.0,
+    "max_change_1h": 300.0,
+    "stop_pct": 30.0,
+    "tp_pct": 60.0,
+    "max_hold_hours": 24,
+    "max_open": 8,
+}

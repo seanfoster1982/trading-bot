@@ -2,7 +2,7 @@
 
 Follows the top realized-PnL wallets on Solana (from Birdeye's weekly trader
 leaderboard) and simulates copying their trades at prices a real copier could
-actually get.
+actually get. Also runs **Market Sniper** — see below.
 
 ## Why the pivot
 
@@ -29,13 +29,32 @@ prices that exist for milliseconds). Whale Trace measures what YOU would make:
 Legacy fill-price shadows (the "+$3.5M" era) are kept in the DB as
 `entry_mode IS NULL` but excluded from all stats.
 
+## Market Sniper (`scripts/market_sniper.py`)
+
+Two additional shadow strategies plus market-wide analysis, same honest
+accounting (detection-time prices, 3% slippage each way, own tables only):
+
+- **fresh_listing** — tokens < 45 min old that already attracted ≥$10k
+  liquidity. Lottery profile: -50% stop, +100% target, 12h max hold.
+- **breakout** — tokens with ≥$75k liquidity and ≥$50k 1h volume moving
+  +25%..+300% in the last hour. The band excludes launch-pump spikes
+  (+60,000%) that are already over. -30% stop, +60% target, 24h max hold.
+- **market pulse** — every cycle logs breadth of the top-100 volume tokens
+  (median 1h change, % gainers) and the new-listing rate; shown in the digest.
+
+Reality check: true same-block sniping is won by MEV bots on dedicated RPC
+infrastructure — no polling bot can compete there. These strategies test the
+edges reachable at 15-minute detection speed, and the shadow stats will show
+whether they exist. Early evidence: fresh tokens can drop 98% between polls.
+
 ## Operation
 
-Two scheduled tasks (register with `scripts\setup_whale_tasks.ps1`):
+Three scheduled tasks (register with `scripts\setup_whale_tasks.ps1`):
 
 - **TradingBotWhaleTrace** — every 15 min: poll wallets, open/close shadows,
   Telegram push on each open (silent) and close (audible)
-- **TradingBotDigest** — 9am/9pm: portfolio + whale trace digest to Telegram
+- **TradingBotSniper** — every 15 min: fresh-listing + breakout scans, pulse
+- **TradingBotDigest** — 9am/9pm: portfolio + whale trace + sniper digest
 
 The old TradingBotMonitor pipeline (screener/ingest/indicators/strategy) is
 retired and its task deleted. `monitor_loop.py` still exists if you ever want

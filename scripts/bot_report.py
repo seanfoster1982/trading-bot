@@ -28,6 +28,7 @@ LOG_PATH = ROOT / "data" / "overnight.log"
 
 # Reuse the (now cwd-safe) Telegram notifier.
 sys.path.insert(0, str(ROOT / "scripts"))
+import market_sniper  # noqa: E402
 import telegram_notifier  # noqa: E402
 import whale_trace  # noqa: E402
 
@@ -89,21 +90,31 @@ def gather_stats(conn: sqlite3.Connection) -> dict:
 
 
 def last_cycle_age_min() -> tuple[str, float] | None:
-    """Return (timestamp_str, age_minutes) of the most recent pipeline cycle."""
-    if not LOG_PATH.exists():
-        return None
-    last_dur_line = None
-    for line in LOG_PATH.read_text(encoding="utf-8").splitlines():
-        if "duration=" in line:
-            last_dur_line = line
-    if not last_dur_line:
-        return None
-    stamp = last_dur_line.split(" | ", 1)[0].strip()
+    """Return (timestamp_str, age_minutes) of the most recent bot activity.
+
+    Uses the market_pulse table (written every sniper cycle) and whale wallet
+    checkpoints — the retired pipeline's overnight.log is no longer updated.
+    """
+    conn = _conn()
     try:
-        dt = datetime.strptime(stamp, "%Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
-    except ValueError:
+        stamps = []
+        for query in (
+            "SELECT MAX(timestamp) FROM market_pulse",
+            "SELECT MAX(last_checked_at) FROM whale_wallets",
+        ):
+            try:
+                row = conn.execute(query).fetchone()
+                if row and row[0]:
+                    stamps.append(row[0])
+            except sqlite3.OperationalError:
+                continue
+    finally:
+        conn.close()
+    if not stamps:
         return None
-    age_min = (time.time() - dt.timestamp()) / 60
+    latest = max(stamps)
+    stamp = datetime.fromtimestamp(latest, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    age_min = (time.time() - latest) / 60
     return stamp, age_min
 
 
@@ -172,6 +183,13 @@ def build_report() -> str:
             lines.append(whale_trace.build_report())
         except Exception as e:
             lines.append(f"(whale trace report unavailable: {type(e).__name__})")
+
+        # Market Sniper — separate shadow strategies + market pulse.
+        try:
+            lines.append("")
+            lines.append(market_sniper.build_report())
+        except Exception as e:
+            lines.append(f"(sniper report unavailable: {type(e).__name__})")
 
         # Loop health
         lines.append("")
