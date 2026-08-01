@@ -89,7 +89,7 @@ CASH_MINTS = {
 # ---------------------------------------------------------------- schema ----
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS whale_wallets (
             wallet TEXT PRIMARY KEY,
@@ -403,7 +403,7 @@ def trace_cycle() -> dict:
     opens: list[dict] = []
     closes: list[dict] = []
     derisks: list[dict] = []
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     with httpx.Client() as client:
         refresh_leaderboard_if_stale(client, conn)
 
@@ -539,7 +539,7 @@ def trace_cycle() -> dict:
 def build_report() -> str:
     """HTML-formatted (Telegram-ready) whale trace performance report."""
     init_db()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
 
     closed = conn.execute("""

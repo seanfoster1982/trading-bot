@@ -102,7 +102,7 @@ MAJOR_SYMBOLS = {"SOL", "WSOL", "USDC", "USDT", "WBTC", "WETH", "CBBTC",
 # ---------------------------------------------------------------- schema ----
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS sniper_trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -623,7 +623,7 @@ def scan_cycle() -> dict:
     now = int(time.time())
     opens: list[dict] = []
     closes: list[dict] = []
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
 
     with httpx.Client() as client:
         # --- scan and open ---
@@ -696,7 +696,7 @@ def scan_cycle() -> dict:
 
 def build_report() -> str:
     init_db()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     lines = ["<b>Market Sniper (shadow, not real trades)</b>"]
 

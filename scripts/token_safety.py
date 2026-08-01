@@ -97,7 +97,7 @@ RUGCHECK_WARN_CAP = 15.0
 
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS token_safety (
             address TEXT PRIMARY KEY,
@@ -310,7 +310,7 @@ def check_token(client: httpx.Client, address: str, symbol: str = "?",
     """Full two-layer audit with caching. Returns dict or None if the primary
     (Birdeye) layer is unavailable. RugCheck is merged in when reachable."""
     init_db()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     try:
         if use_cache:
             row = conn.execute("""
@@ -343,13 +343,16 @@ def check_token(client: httpx.Client, address: str, symbol: str = "?",
             flags.extend(ts_flags)
             hard_block = hard_block or ts_hard
 
-        conn.execute("""
-            INSERT OR REPLACE INTO token_safety
-            (address, symbol, score, flags, hard_block, checked_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (address, symbol, score, json.dumps(flags), int(hard_block),
-              int(time.time())))
-        conn.commit()
+        try:
+            conn.execute("""
+                INSERT OR REPLACE INTO token_safety
+                (address, symbol, score, flags, hard_block, checked_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (address, symbol, score, json.dumps(flags), int(hard_block),
+                  int(time.time())))
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # cache write is optional; never kill a trading cycle over it
         return {"address": address, "symbol": symbol, "score": score,
                 "flags": flags, "hard_block": hard_block, "cached": False}
     finally:

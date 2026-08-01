@@ -26,8 +26,10 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "FAIL TradingBotWhaleTrace" -ForegroundColor Red
 }
 
+# Staggered 5 min after whale trace so the two never contend for the DB/API
+# at the same clock tick.
 schtasks /Delete /TN "TradingBotSniper" /F 2>$null
-schtasks /Create /TN "TradingBotSniper" /TR "`"$Pyw`" `"$Sniper`"" /SC MINUTE /MO 15 /F
+schtasks /Create /TN "TradingBotSniper" /TR "`"$Pyw`" `"$Sniper`"" /SC MINUTE /MO 15 /ST 00:05 /F
 if ($LASTEXITCODE -eq 0) {
     Write-Host "OK  TradingBotSniper - every 15 minutes" -ForegroundColor Green
 } else {

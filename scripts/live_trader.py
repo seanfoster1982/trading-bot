@@ -91,7 +91,7 @@ JUP_HOSTS = ["https://lite-api.jup.ag/swap/v1", "https://quote-api.jup.ag/v6"]
 # ------------------------------------------------------------------ setup ---
 
 def init_db() -> None:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     # An empty live_trades scaffold from a retired design may exist; move it
     # aside rather than colliding with the new schema.
     cols = [r[1] for r in conn.execute("PRAGMA table_info(live_trades)")]
@@ -502,7 +502,7 @@ def cycle() -> None:
     if keypair is None:
         print("SOLANA_PRIVATE_KEY missing/unparseable — cannot trade")
         return
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     with httpx.Client() as client:
         manage_open(client, conn, keypair)
 
@@ -539,7 +539,7 @@ def cycle() -> None:
 
 def status() -> None:
     init_db()
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     kp = get_keypair()
     with httpx.Client() as client:
         bal = get_sol_balance(client, str(kp.pubkey())) if kp else 0.0
