@@ -7,6 +7,11 @@ solders>=0.21.0
 solana>=0.34.0
 base58>=2.1.1
 
+# EVM / Robinhood Chain (0x AllowanceHolder)
+eth-account>=0.13.0
+eth-abi>=5.1.0
+eth-utils>=5.0.0
+
 # Data + persistence
 sqlalchemy>=2.0.0
 # psycopg2-binary>=2.9.9   # uncomment if using Postgres instead of SQLite

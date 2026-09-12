@@ -118,12 +118,10 @@ SAFETY_MAX_SCORE = 50.0             # breakout / bb_bounce / whale_trace
 # apply in full.
 SAFETY_MAX_SCORE_FRESH = 80.0
 
-# --- LIVE trading (live_trader.py) — REAL MONEY ---
-# $100 lifetime authorization (user, 2026-07-27), split into $25 bullets.
-# The executor only fires when a candidate passes criteria far stricter than
-# any shadow strategy AND the wallet holds enough SOL. Risk controls:
-# budget cap, concurrency cap, buy spacing, and a drawdown halt.
-LIVE_ENABLED = True
+# --- LIVE trading (live_trader.py) — Solana / Jupiter ---
+# Disabled: capital moved to Robinhood Chain. Do not re-enable without a
+# funded Solana hot wallet that is NOT the 9SDJ address.
+LIVE_ENABLED = False
 LIVE_BUDGET_USD = 100.0             # lifetime spend cap across ALL live buys
 LIVE_TRADE_USD = 25.0               # size per position (4 bullets total)
 LIVE_MAX_OPEN = 2
@@ -137,6 +135,25 @@ LIVE_SLIPPAGE_BPS = 300             # 3% max slippage on Jupiter swaps
 LIVE_STOP_PCT = 35.0
 LIVE_MAX_HOLD_HOURS = 48
 LIVE_FEE_BUFFER_SOL = 0.01          # keep for tx fees / rent
+
+# --- Robinhood Chain live (rh_live_trader.py) — REAL ETH ---
+# User-funded wallet 0x4D77…D91c (~$94 ETH on 2026-09-12). Spend stays OFF
+# until --test-plumbing succeeds AND RH_LIVE_ENABLED is flipped to True.
+# Caps are a measurement pilot, not a profit target. All $50 can still be lost.
+RH_LIVE_ENABLED = False
+RH_EXPECTED_ADDRESS = "0x4D772dB54461eAc90538d6c1E336841f4ACbD91c"
+RH_BUDGET_USD = 50.0
+RH_TRADE_USD = 5.0
+RH_MAX_OPEN = 1
+RH_MAX_REALIZED_LOSS_USD = 10.0
+RH_MIN_HOURS_BETWEEN_BUYS = 6
+RH_SLIPPAGE_BPS = 100               # 1% 0x slippage
+RH_STOP_PCT = 25.0
+RH_MAX_HOLD_HOURS = 24
+RH_FEE_BUFFER_ETH = 0.001           # keep for gas
+RH_MIN_LIQUIDITY = 100_000.0        # Dexscreener USD liquidity
+RH_MIN_VOLUME_1H = 10_000.0         # skip idle pools even if TVL looks large
+RH_MAX_ROUNDTRIP_COST_PCT = 3.0     # reject if 0x buy+sell haircut exceeds this
 
 # Strategy B: breakouts — established-enough tokens accelerating right now.
 # The +25%..+300% band deliberately excludes launch-pump garbage (+60,000%).

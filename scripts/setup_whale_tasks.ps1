@@ -12,6 +12,7 @@ $Trace  = "$Repo\scripts\whale_trace.py"
 $Sniper = "$Repo\scripts\market_sniper.py"
 $Digest = "$Repo\scripts\bot_report.py"
 $Live   = "$Repo\scripts\live_trader.py"
+$RhLive = "$Repo\scripts\rh_live_trader.py"
 
 Write-Host "=== Whale Trace - task setup ===" -ForegroundColor Cyan
 
@@ -36,12 +37,22 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "FAIL TradingBotSniper" -ForegroundColor Red
 }
 
+# Solana Jupiter live trader stays disabled — capital is on Robinhood Chain.
 schtasks /Delete /TN "TradingBotLive" /F 2>$null
 schtasks /Create /TN "TradingBotLive" /TR "`"$Pyw`" `"$Live`"" /SC MINUTE /MO 15 /F
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "OK  TradingBotLive - every 15 minutes (REAL MONEY, `$25 budget)" -ForegroundColor Green
+    schtasks /Change /TN "TradingBotLive" /DISABLE 2>$null
+    Write-Host "OK  TradingBotLive - created DISABLED (Solana live off)" -ForegroundColor Green
 } else {
     Write-Host "FAIL TradingBotLive" -ForegroundColor Red
+}
+
+schtasks /Delete /TN "TradingBotRhLive" /F 2>$null
+schtasks /Create /TN "TradingBotRhLive" /TR "`"$Pyw`" `"$RhLive`"" /SC MINUTE /MO 15 /ST 00:10 /F
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "OK  TradingBotRhLive - every 15 min (no-op until RH_LIVE_ENABLED=True)" -ForegroundColor Green
+} else {
+    Write-Host "FAIL TradingBotRhLive" -ForegroundColor Red
 }
 
 schtasks /Delete /TN "TradingBotDigest" /F 2>$null

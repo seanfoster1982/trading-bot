@@ -1,0 +1,4 @@
+{
+  "comment": "Checksummed Robinhood Chain ERC-20 addresses this bot may buy. Empty means Dexscreener scan only. Never identify tokens by ticker alone — USDG squatters exist. US tokenized stocks are skipped even if listed here.",
+  "tokens": []
+}

@@ -191,6 +191,13 @@ def build_report() -> str:
         except Exception as e:
             lines.append(f"(sniper report unavailable: {type(e).__name__})")
 
+        try:
+            import rh_live_trader
+            lines.append("")
+            lines.append(rh_live_trader.build_report())
+        except Exception as e:
+            lines.append(f"(robinhood live report unavailable: {type(e).__name__})")
+
         # Loop health
         lines.append("")
         cyc = last_cycle_age_min()

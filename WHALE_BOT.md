@@ -209,3 +209,39 @@ fills, MEV, failed txs). Treat it as an upper bound.
 - `whale_trace_trades` table in `data/memecoins.db` — every shadow trade
 - `whale_wallets` table — watchlist with culled flags
 - Telegram — real-time shadow opens/closes + digests
+
+## Robinhood Chain live trader (`scripts/rh_live_trader.py`)
+
+Solana Jupiter live trading is **off**. Real-money execution for ETH on
+Robinhood Chain (chain ID 4663) lives in a separate executor that uses the
+0x Swap API **AllowanceHolder** path — never Jupiter, never Permit2, and
+never an approval to the 0x Settler contract.
+
+**Wallet:** `0x4D772dB54461eAc90538d6c1E336841f4ACbD91c` (must match the
+key in `EVM_PRIVATE_KEY`). Native gas token is ETH.
+
+**Spend stays disabled** until all of these are true:
+
+1. `python scripts/rh_live_trader.py --status` shows this address and the ETH balance.
+2. `ZERO_EX_API_KEY` is set (https://dashboard.0x.org/apps).
+3. `python scripts/rh_live_trader.py --test-plumbing` prints `validate_quote: True` and `signed (NOT sent)`.
+4. You set `RH_LIVE_ENABLED = True` in `scripts/whale_config.py`.
+
+Pilot caps (all of the $50 can still be lost):
+
+| Setting | Default |
+|---|---|
+| `RH_LIVE_ENABLED` | `False` |
+| `RH_BUDGET_USD` | $50 lifetime |
+| `RH_TRADE_USD` | $5 |
+| `RH_MAX_OPEN` | 1 |
+| `RH_MAX_REALIZED_LOSS_USD` | $10 halt |
+| `RH_SLIPPAGE_BPS` | 100 (1%) |
+| `RH_MAX_ROUNDTRIP_COST_PCT` | 3% 0x buy+sell haircut |
+| `RH_MIN_LIQUIDITY` | $100,000 Dexscreener |
+| `RH_MIN_VOLUME_1H` | $10,000 |
+
+Entries skip ticker-squat USDG, tokenized-equity symbols, and native/WETH.
+Optional allow-list: `data/rh_watchlist.json`. US stock tokens are out of
+universe. Put `EVM_PRIVATE_KEY` and `ZERO_EX_API_KEY` in `.env` yourself —
+never in chat.
