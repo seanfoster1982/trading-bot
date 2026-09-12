@@ -50,7 +50,7 @@ if ($LASTEXITCODE -eq 0) {
 schtasks /Delete /TN "TradingBotRhLive" /F 2>$null
 schtasks /Create /TN "TradingBotRhLive" /TR "`"$Pyw`" `"$RhLive`"" /SC MINUTE /MO 15 /ST 00:10 /F
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "OK  TradingBotRhLive - every 15 min (no-op until RH_LIVE_ENABLED=True)" -ForegroundColor Green
+    Write-Host "OK  TradingBotRhLive - every 15 min (ARMED: real RH ETH swaps)" -ForegroundColor Yellow
 } else {
     Write-Host "FAIL TradingBotRhLive" -ForegroundColor Red
 }
@@ -66,4 +66,6 @@ if ($LASTEXITCODE -eq 0) {
 schtasks /Run /TN "TradingBotWhaleTrace"
 Write-Host ""
 Write-Host "Whale Trace polling every 15 min. Telegram: shadow opens/closes + digests." -ForegroundColor Yellow
+Write-Host "TradingBotRhLive is ARMED. Confirm .env has EVM_PRIVATE_KEY, ZERO_EX_API_KEY, TELEGRAM_* then run:" -ForegroundColor Yellow
+Write-Host "  .venv\Scripts\python.exe scripts\rh_live_trader.py --status" -ForegroundColor Yellow
 Write-Host "Guide: WHALE_BOT.md" -ForegroundColor Yellow

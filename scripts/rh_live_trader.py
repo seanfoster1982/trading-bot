@@ -1,8 +1,9 @@
 """Robinhood Chain live trader — 0x AllowanceHolder, ETH gas, hard caps.
 
 This is a NEW executor. It does not use Jupiter or Solana keys.
-Default RH_LIVE_ENABLED is False: --status and --test-plumbing work;
-no broadcast until you flip the config flag after a successful dry-run.
+RH_LIVE_ENABLED is True after a successful 2026-09-12 plumbing check.
+--status and --test-plumbing never broadcast. A bare run (or the
+Windows TradingBotRhLive task) will send 0x swaps.
 
 Usage:
     python scripts/rh_live_trader.py --status
@@ -623,6 +624,8 @@ def cycle() -> None:
     if not RH_LIVE_ENABLED:
         print("RH live trading disabled in whale_config (RH_LIVE_ENABLED=False)")
         return
+    if not telegram_notifier.is_configured():
+        print("WARNING: TELEGRAM_BOT_TOKEN/CHAT_ID missing — trades will not alert")
     init_db()
     account = load_account()
     if account is None:
@@ -688,6 +691,9 @@ def status() -> None:
     print(f"ETH: {bal:.6f} (~${bal * eth_px:,.2f} @ ${eth_px:,.2f})")
     print(f"RH_LIVE_ENABLED: {RH_LIVE_ENABLED}")
     print(f"0x API key: {'yes' if has_0x_key() else 'NO — quotes disabled'}")
+    print(
+        f"Telegram: {'yes' if telegram_notifier.is_configured() else 'NO — fills will not alert'}"
+    )
     conn = sqlite3.connect(DB_PATH, timeout=30)
     print(f"Budget left: ${budget_left(conn):.2f} of ${RH_BUDGET_USD:.2f}")
     print(f"Open: {open_count(conn)} (max {RH_MAX_OPEN})")

@@ -220,18 +220,33 @@ never an approval to the 0x Settler contract.
 **Wallet:** `0x4D772dB54461eAc90538d6c1E336841f4ACbD91c` (must match the
 key in `EVM_PRIVATE_KEY`). Native gas token is ETH.
 
-**Spend stays disabled** until all of these are true:
+**Spend is armed in git** (`RH_LIVE_ENABLED = True`) after the 2026-09-12
+plumbing check (quote + sign, not broadcast). This cloud host does **not**
+run a live cycle. The first real swap happens on your Windows PC after you
+pull this branch and register `TradingBotRhLive`.
 
-1. `python scripts/rh_live_trader.py --status` shows this address and the ETH balance.
-2. `ZERO_EX_API_KEY` is set (https://dashboard.0x.org/apps).
-3. `python scripts/rh_live_trader.py --test-plumbing` prints `validate_quote: True` and `signed (NOT sent)`.
-4. You set `RH_LIVE_ENABLED = True` in `scripts/whale_config.py`.
+Windows (from `C:\Users\seanf\Documents\trading-bot`):
+
+```
+git fetch origin
+git checkout tests-paper-trader
+git pull origin tests-paper-trader
+.venv\Scripts\pip.exe install -r requirements.txt
+.venv\Scripts\python.exe scripts\rh_live_trader.py --status
+.venv\Scripts\python.exe scripts\rh_live_trader.py --test-plumbing
+powershell -ExecutionPolicy Bypass -File scripts\setup_whale_tasks.ps1
+```
+
+`.env` on that PC must include `EVM_PRIVATE_KEY`, `ZERO_EX_API_KEY`, and
+(for fill alerts) `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`. Never paste the
+key in chat. `--status` / `--test-plumbing` never broadcast; the scheduled
+task (or a bare `python scripts/rh_live_trader.py`) will.
 
 Pilot caps (all of the $50 can still be lost):
 
 | Setting | Default |
 |---|---|
-| `RH_LIVE_ENABLED` | `False` |
+| `RH_LIVE_ENABLED` | `True` |
 | `RH_BUDGET_USD` | $50 lifetime |
 | `RH_TRADE_USD` | $5 |
 | `RH_MAX_OPEN` | 1 |
