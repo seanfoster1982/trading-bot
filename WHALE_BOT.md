@@ -250,18 +250,22 @@ until `.env` has a bot token.
 
 Do this on the PC (do **not** paste the token in chat):
 
-1. Open Telegram, search `@BotFather`. Reuse `@RealChainTradingBot` (`/token`)
-   or `/newbot`.
+1. In `@BotFather`, copy the HTTP API token for the bot you created.
 2. Add `TELEGRAM_BOT_TOKEN=...` to `C:\Users\seanf\Documents\trading-bot\.env`.
-3. Open the bot in Telegram and tap **Start** (send any message).
-4. Run:
+3. Leave BotFather. Start is **not** in that chat.
+4. In BotFather's "Done! Congratulations" message, tap the `t.me/...` link.
+   That opens **your** bot. Or search the `@username` BotFather printed (it
+   ends in `bot`).
+5. In that chat, tap the blue **START** button at the bottom. If there is no
+   button, type `/start` and send it.
+6. Run:
 
 ```
 .venv\Scripts\python.exe scripts\setup_telegram.py
 ```
 
-That script writes `TELEGRAM_CHAT_ID` from Telegram's `getUpdates` and sends a
-test ping. Same check: `python scripts/rh_live_trader.py --test-telegram`.
+That script prints your bot's `@username`, writes `TELEGRAM_CHAT_ID`, and
+sends a test ping. Same check: `python scripts/rh_live_trader.py --test-telegram`.
 
 Pilot caps (all of the $50 can still be lost):
 

@@ -18,10 +18,14 @@ from dotenv import load_dotenv
 _ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 
+def _clean(value: str) -> str:
+    return (value or "").strip().strip('"').strip("'")
+
+
 def _creds() -> tuple[str, str]:
     load_dotenv(dotenv_path=_ENV_PATH)
-    token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
-    chat = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+    token = _clean(os.getenv("TELEGRAM_BOT_TOKEN") or "")
+    chat = _clean(os.getenv("TELEGRAM_CHAT_ID") or "")
     return token, chat
 
 
@@ -61,6 +65,43 @@ def send(text: str, silent: bool = False) -> bool:
 
 
 send_message = send
+
+
+def bot_identity(token: str) -> dict | None:
+    """Return {username, name} from getMe. Does not print the token."""
+    token = _clean(token)
+    if not token:
+        return None
+    try:
+        r = httpx.get(f"https://api.telegram.org/bot{token}/getMe", timeout=10.0)
+    except Exception as e:
+        print(f"[telegram] getMe failed: {type(e).__name__}", file=sys.stderr)
+        return None
+    if r.status_code != 200:
+        print(f"[telegram] getMe HTTP {r.status_code} — token rejected", file=sys.stderr)
+        return None
+    try:
+        result = (r.json() or {}).get("result") or {}
+    except json.JSONDecodeError:
+        return None
+    username = result.get("username")
+    if not username:
+        return None
+    return {"username": username, "name": result.get("first_name") or username}
+
+
+def _print_open_bot_help(username: str | None = None) -> None:
+    print("Start is not in @BotFather. That chat is only for creating the bot.")
+    if username:
+        print(f"Your bot is @{username}")
+        print(f"Open: https://t.me/{username}")
+    print("On your phone:")
+    print("  1. Scroll to BotFather's 'Done! Congratulations' message")
+    print("     and tap the t.me/... link (that opens YOUR bot, not BotFather).")
+    print("  2. Or tap Telegram search (magnifying glass) and type the @username")
+    print("     BotFather gave you — it ends in 'bot'.")
+    print("  3. Open that chat. A blue START button is at the bottom.")
+    print("     If you don't see Start, type /start and send it.")
 
 
 def discover_chat_id(token: str) -> str | None:
@@ -117,12 +158,12 @@ def upsert_env(key: str, value: str, path: Path | None = None) -> None:
 def _print_token_help() -> None:
     print("Telegram phone alerts need TELEGRAM_BOT_TOKEN in .env (gitignored).")
     print("Do not paste the token in chat.")
-    print("1. Phone: open Telegram, search @BotFather")
-    print("2. Reuse @RealChainTradingBot (/token) or /newbot")
-    print("3. Add this line to .env:")
+    print("1. In @BotFather, copy the HTTP API token for the bot you just created.")
+    print("2. Add this line to .env:")
     print("     TELEGRAM_BOT_TOKEN=<paste token here>")
-    print("4. Open the bot in Telegram and tap Start (send any message)")
-    print("5. Re-run: python scripts/setup_telegram.py")
+    print("3. Then open YOUR bot (not BotFather) and send /start — see below.")
+    _print_open_bot_help()
+    print("4. Re-run: python scripts/setup_telegram.py")
 
 
 def setup(*, send_test: bool = True) -> bool:
@@ -131,11 +172,17 @@ def setup(*, send_test: bool = True) -> bool:
     if not token:
         _print_token_help()
         return False
+    ident = bot_identity(token)
+    if ident is None:
+        print("Token in .env was rejected by Telegram. Copy the HTTP API token again from @BotFather.")
+        return False
+    print(f"Bot ok: @{ident['username']}")
     if not chat:
         print("TELEGRAM_CHAT_ID missing — asking Telegram for the chat that pinged the bot.")
         found = discover_chat_id(token)
         if not found:
-            print("No chat yet. Open Telegram, message your bot, then re-run this script.")
+            _print_open_bot_help(ident["username"])
+            print("Then re-run: python scripts/setup_telegram.py")
             return False
         upsert_env("TELEGRAM_CHAT_ID", found)
         os.environ["TELEGRAM_CHAT_ID"] = found

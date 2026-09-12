@@ -95,8 +95,44 @@ def test_setup_sends_when_configured(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
     monkeypatch.setenv("TELEGRAM_CHAT_ID", "42")
     monkeypatch.setattr(tg, "load_dotenv", lambda **kwargs: None)
+    monkeypatch.setattr(
+        tg, "bot_identity", lambda token: {"username": "my_bot", "name": "My"}
+    )
     monkeypatch.setattr(tg.httpx, "post", lambda *a, **k: _Resp(200, {"ok": True}))
     assert tg.setup(send_test=True) is True
+
+
+def test_bot_identity(monkeypatch):
+    monkeypatch.setattr(
+        tg.httpx,
+        "get",
+        lambda *a, **k: _Resp(
+            200, {"ok": True, "result": {"username": "alerts_bot", "first_name": "Alerts"}}
+        ),
+    )
+    ident = tg.bot_identity("tok")
+    assert ident == {"username": "alerts_bot", "name": "Alerts"}
+
+
+def test_creds_strip_quotes(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", '"abc:def"')
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "'99'")
+    monkeypatch.setattr(tg, "load_dotenv", lambda **kwargs: None)
+    assert tg._creds() == ("abc:def", "99")
+
+
+def test_setup_no_chat_prints_username(monkeypatch, capsys):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "")
+    monkeypatch.setattr(tg, "load_dotenv", lambda **kwargs: None)
+    monkeypatch.setattr(
+        tg, "bot_identity", lambda token: {"username": "alerts_bot", "name": "Alerts"}
+    )
+    monkeypatch.setattr(tg, "discover_chat_id", lambda token: None)
+    assert tg.setup(send_test=True) is False
+    out = capsys.readouterr().out
+    assert "@alerts_bot" in out
+    assert "t.me/alerts_bot" in out
 
 
 def test_setup_without_token_does_not_call_api(monkeypatch):
