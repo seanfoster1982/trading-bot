@@ -137,10 +137,10 @@ LIVE_MAX_HOLD_HOURS = 48
 LIVE_FEE_BUFFER_SOL = 0.01          # keep for tx fees / rent
 
 # --- Robinhood Chain live (rh_live_trader.py) — REAL ETH ---
-# User-funded wallet 0x4D77…D91c (~$94 ETH on 2026-09-12). Spend stays OFF
-# until --test-plumbing succeeds AND RH_LIVE_ENABLED is flipped to True.
-# Caps are a measurement pilot, not a profit target. All $50 can still be lost.
-RH_LIVE_ENABLED = False
+# User-funded wallet 0x4D77…D91c (~$94 ETH). Plumbing (quote+sign, no send)
+# succeeded 2026-09-12. Cycle still requires this flag; do not run the
+# executor from an untrusted host. All $50 of the pilot budget can be lost.
+RH_LIVE_ENABLED = True
 RH_EXPECTED_ADDRESS = "0x4D772dB54461eAc90538d6c1E336841f4ACbD91c"
 RH_BUDGET_USD = 50.0
 RH_TRADE_USD = 5.0
