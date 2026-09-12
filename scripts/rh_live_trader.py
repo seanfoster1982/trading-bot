@@ -70,6 +70,16 @@ DEXSCREENER = "https://api.dexscreener.com"
 COINGECKO = "https://api.coingecko.com/api/v3/simple/price"
 
 
+def _notify(text: str, *, cooldown_key: str | None = None, cooldown_s: int = 0) -> None:
+    if cooldown_key:
+        path = ROOT / "data" / "cache" / f"tg_{cooldown_key}"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if cooldown_s and path.exists() and time.time() - path.stat().st_mtime < cooldown_s:
+            return
+        path.write_text("1", encoding="utf-8")
+    telegram_notifier.send(text)
+
+
 def init_db() -> None:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("""
@@ -501,7 +511,7 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
           now, entry, RH_TRADE_USD, spend_wei / 1e18, tokens, txh))
     conn.commit()
     telegram_notifier.send(
-        f"RH LIVE BUY\n{cand.get('symbol')} ${RH_TRADE_USD:.0f}\n"
+        f"<b>RH LIVE BUY</b>\n{cand.get('symbol')} ${RH_TRADE_USD:.0f}\n"
         f"{rh.RH_EXPLORER}/tx/{txh}\nround-trip est {rt:.2f}%"
     )
     return {"symbol": cand.get("symbol"), "tx": txh, "buyAmount": buy_amt}
@@ -617,7 +627,7 @@ def manage_open(client: httpx.Client, conn: sqlite3.Connection, account,
         """, (now, close_reason, px, txh, pnl, tid))
         conn.commit()
         telegram_notifier.send(
-            f"RH CLOSE {sym} {close_reason}\nP&L ${pnl:+.2f}\n{txh}")
+            f"<b>RH CLOSE</b> {sym} {close_reason}\nPnL ${pnl:+.2f}\n{txh}")
 
 
 def cycle() -> None:
@@ -633,6 +643,11 @@ def cycle() -> None:
         return
     if not rh.addr_eq(account.address, RH_EXPECTED_ADDRESS):
         print(f"ERROR: key derives {account.address}, expected {RH_EXPECTED_ADDRESS}")
+        _notify(
+            "RH live key mismatch — refusing to trade.",
+            cooldown_key="key_mismatch",
+            cooldown_s=6 * 3600,
+        )
         return
     conn = sqlite3.connect(DB_PATH, timeout=30)
     with httpx.Client() as client:
@@ -650,6 +665,11 @@ def cycle() -> None:
         pnl = realized_pnl(conn)
         if pnl <= -RH_MAX_REALIZED_LOSS_USD:
             print(f"DRAWDOWN HALT ${pnl:+.2f}")
+            _notify(
+                f"RH DRAWDOWN HALT ${pnl:+.2f} — no new buys.",
+                cooldown_key="drawdown",
+                cooldown_s=6 * 3600,
+            )
             conn.close()
             return
         if last_buy_at(conn) and time.time() - last_buy_at(conn) < RH_MIN_HOURS_BETWEEN_BUYS * 3600:
@@ -767,11 +787,17 @@ def build_report() -> str:
     )
 
 
+def test_telegram() -> int:
+    """Send a phone ping. Discovers chat id if the token is already in .env."""
+    return 0 if telegram_notifier.setup(send_test=True) else 1
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Robinhood Chain 0x live trader")
     p.add_argument("--status", action="store_true")
     p.add_argument("--scan", action="store_true")
     p.add_argument("--test-plumbing", action="store_true")
+    p.add_argument("--test-telegram", action="store_true")
     args = p.parse_args()
     if args.status:
         status()
@@ -782,6 +808,8 @@ def main() -> None:
     if args.test_plumbing:
         test_plumbing()
         return
+    if args.test_telegram:
+        raise SystemExit(test_telegram())
     cycle()
 
 

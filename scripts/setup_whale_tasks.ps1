@@ -64,8 +64,18 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 schtasks /Run /TN "TradingBotWhaleTrace"
+
+$Py = "$Repo\.venv\Scripts\python.exe"
+Write-Host ""
+Write-Host "Checking Telegram phone alerts..." -ForegroundColor Cyan
+& $Py "$Repo\scripts\setup_telegram.py"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "Telegram is not sending yet. Add TELEGRAM_BOT_TOKEN to .env, message the bot, re-run this script." -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "Whale Trace polling every 15 min. Telegram: shadow opens/closes + digests." -ForegroundColor Yellow
 Write-Host "TradingBotRhLive is ARMED. Confirm .env has EVM_PRIVATE_KEY, ZERO_EX_API_KEY, TELEGRAM_* then run:" -ForegroundColor Yellow
 Write-Host "  .venv\Scripts\python.exe scripts\rh_live_trader.py --status" -ForegroundColor Yellow
+Write-Host "  .venv\Scripts\python.exe scripts\rh_live_trader.py --test-telegram" -ForegroundColor Yellow
 Write-Host "Guide: WHALE_BOT.md" -ForegroundColor Yellow

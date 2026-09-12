@@ -242,6 +242,27 @@ powershell -ExecutionPolicy Bypass -File scripts\setup_whale_tasks.ps1
 key in chat. `--status` / `--test-plumbing` never broadcast; the scheduled
 task (or a bare `python scripts/rh_live_trader.py`) will.
 
+## Telegram phone alerts
+
+The Windows tasks already call `telegram_notifier.send` for RH buys/sells/halts,
+Solana paper/shadow opens, and the 9am/9pm digest. Nothing reaches your phone
+until `.env` has a bot token.
+
+Do this on the PC (do **not** paste the token in chat):
+
+1. Open Telegram, search `@BotFather`. Reuse `@RealChainTradingBot` (`/token`)
+   or `/newbot`.
+2. Add `TELEGRAM_BOT_TOKEN=...` to `C:\Users\seanf\Documents\trading-bot\.env`.
+3. Open the bot in Telegram and tap **Start** (send any message).
+4. Run:
+
+```
+.venv\Scripts\python.exe scripts\setup_telegram.py
+```
+
+That script writes `TELEGRAM_CHAT_ID` from Telegram's `getUpdates` and sends a
+test ping. Same check: `python scripts/rh_live_trader.py --test-telegram`.
+
 Pilot caps (all of the $50 can still be lost):
 
 | Setting | Default |

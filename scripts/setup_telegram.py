@@ -1,4 +1,8 @@
-﻿"""Compatibility wrapper. Use telegram_notifier / setup_telegram instead."""
+"""Configure Telegram phone alerts from .env. Never prints secrets.
+
+Usage:
+    python scripts/setup_telegram.py
+"""
 from __future__ import annotations
 
 import sys
