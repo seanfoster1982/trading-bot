@@ -3,13 +3,23 @@
 This is the main Discord operations console. Reuses stop_control for HALT/RESUME.
 No EVM/Solana private keys, no transaction signing, no /buy /sell /trade commands.
 
+IMPORTANT CHANNEL ROUTING:
+  - BUY/SELL/HOLD/NO_TRADE **decisions** → #signals (NOT executions!)
+  - BLOCKED → #risk-vetoes (or #security if GoPlus-related)
+  - Confirmed rh_live_trades with tx_hash → #trade-executions
+  - HALT/RESUME events → #operations + #audit-log
+
+Discord reports trades; it does NOT execute them. RH Chain trades will NOT
+appear in Phantom/Solana wallets — they run on Robinhood Chain (EIP-155 4663).
+
 Usage:
     python scripts/discord_gateway.py --check         # env + dependency check
     python scripts/discord_gateway.py --connect-test  # connect and verify identity
     python scripts/discord_gateway.py                 # run persistent gateway
+    python scripts/discord_gateway.py --backfill      # replay historical events (optional)
 
 Slash commands:
-    Read-only: /status /positions /pnl /risk /signals /sources /scan /help
+    Read-only: /status /wallets /positions /pnl /risk /signals /sources /scan /help
     Control (operator only): /halt /stop /pause /emergency_stop /resume
 """
 from __future__ import annotations
@@ -37,13 +47,17 @@ LOCK_PATH = ROOT / "data" / "discord" / "gateway.lock"
 
 def _acquire_single_instance() -> object:
     """Prevent duplicate gateway processes. Returns an open lock file handle to hold."""
-    import msvcrt
     LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     fh = open(LOCK_PATH, "a+")
     try:
-        fh.seek(0)
-        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
-    except OSError as e:
+        if sys.platform == "win32":
+            import msvcrt
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, IOError) as e:
         fh.close()
         raise SystemExit(f"Another discord_gateway instance is already running ({LOCK_PATH}): {e}")
     fh.write(str(os.getpid()) + "\n")
@@ -57,6 +71,24 @@ LOG_PATH = LOG_DIR / "discord_gateway.log"
 STATE_DIR = ROOT / "data" / "discord"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_DB = STATE_DIR / "state.sqlite3"
+
+REPORTING_CORRECTION_NOTICE = """
+**⚠️ REPORTING CORRECTION NOTICE (Phase 2D.2)**
+
+Previous Discord messages may have incorrectly labeled **BUY/SELL decisions** as "executed" trades.
+
+**Clarifications:**
+1. **Decisions ≠ Executions**: A "BUY" or "SELL" decision from the strategy engine is NOT the same as an executed trade with a transaction hash.
+2. **Actual executions** now include: Chain ID, executor wallet, and explorer link to the transaction.
+3. **RH Chain trades (ID 4663) will NOT appear in Phantom/Solana wallets** — they are different blockchains.
+4. **Historical Discord messages were not deleted** — this notice explains the correction.
+
+Going forward, you will see:
+- `BUY DECISION / NOT EXECUTED` and `SELL DECISION / NOT YET CONFIRMED` in #signals
+- `BUY EXECUTED` and `SELL EXECUTED` in #trade-executions (only when transaction hash exists)
+
+If you see old messages saying "BUY" or "SELL" without a tx hash, those were decisions, not executions.
+"""
 
 
 def _setup_logging() -> logging.Logger:
@@ -286,14 +318,19 @@ def _init_state_db():
 
 
 def _get_checkpoint(table_name: str) -> tuple[int, float]:
-    """Get last processed ID and timestamp for a table."""
+    """Get last processed ID and timestamp for a table.
+    
+    Returns existing checkpoint if present. If no checkpoint exists, returns
+    (None, 0.0) to signal the caller should seed to MAX(id) before publishing.
+    This prevents silent historical replay on first startup.
+    """
     conn = sqlite3.connect(STATE_DB, timeout=10)
     row = conn.execute(
         "SELECT last_id, last_ts FROM publisher_checkpoint WHERE table_name=?",
         (table_name,)
     ).fetchone()
     conn.close()
-    return (row[0], row[1]) if row else (0, 0.0)
+    return (row[0], row[1]) if row else (None, 0.0)
 
 
 def _set_checkpoint(table_name: str, last_id: int, last_ts: float):
@@ -307,11 +344,78 @@ def _set_checkpoint(table_name: str, last_id: int, last_ts: float):
     conn.close()
 
 
+def _seed_checkpoint_to_max(table_name: str, trading_db: Path) -> int:
+    """Seed checkpoint to current MAX(id) for a table, preventing historical replay.
+    
+    Called on first startup when no checkpoint exists. Returns the seeded value.
+    """
+    max_id = 0
+    if trading_db.exists():
+        try:
+            conn = sqlite3.connect(trading_db, timeout=10)
+            row = conn.execute(f"SELECT MAX(id) FROM {table_name}").fetchone()
+            if row and row[0] is not None:
+                max_id = row[0]
+            conn.close()
+        except Exception as e:
+            log.warning(f"Could not get MAX(id) for {table_name}: {e}")
+    
+    _set_checkpoint(table_name, max_id, time.time())
+    log.info(f"Seeded checkpoint for {table_name} to {max_id} (no historical replay)")
+    return max_id
+
+
+def _seed_stop_events_checkpoint() -> int:
+    """Seed stop_events checkpoint to current MAX(rowid)."""
+    import stop_control
+    max_id = 0
+    try:
+        stop_control.ensure_initialized()
+        conn = sqlite3.connect(stop_control.DB_PATH, timeout=10)
+        row = conn.execute("SELECT MAX(rowid) FROM stop_events").fetchone()
+        if row and row[0] is not None:
+            max_id = row[0]
+        conn.close()
+    except Exception as e:
+        log.warning(f"Could not get MAX(rowid) for stop_events: {e}")
+    
+    _set_checkpoint("stop_events", max_id, time.time())
+    log.info(f"Seeded checkpoint for stop_events to {max_id} (no historical replay)")
+    return max_id
+
+
+def _is_event_posted(event_id: str) -> bool:
+    """Check if an event has already been posted (dedup)."""
+    conn = sqlite3.connect(STATE_DB, timeout=10)
+    row = conn.execute(
+        "SELECT 1 FROM posted_events WHERE event_id=?", (event_id,)
+    ).fetchone()
+    conn.close()
+    return row is not None
+
+
+def _mark_event_posted(event_id: str, channel: str):
+    """Record that an event has been posted."""
+    conn = sqlite3.connect(STATE_DB, timeout=10)
+    conn.execute(
+        "INSERT OR IGNORE INTO posted_events VALUES (?,?,?)",
+        (event_id, time.time(), channel)
+    )
+    conn.commit()
+    conn.close()
+
+
 class DiscordGateway:
-    """Persistent Discord bot with slash commands and event publisher."""
+    """Persistent Discord bot with slash commands and event publisher.
+    
+    IMPORTANT: Discord reports trades; it does NOT execute them.
+    RH Chain trades (chain ID 4663) will NOT appear in Phantom/Solana wallets.
+    """
     
     CHANNEL_ROUTES = {
         "executions": "trade-executions",
+        "BUY_DECISION": "signals",
+        "SELL_DECISION": "signals",
         "BUY": "signals",
         "SELL": "signals",
         "HOLD": "signals",
@@ -324,13 +428,14 @@ class DiscordGateway:
         "airdrop": "airdrops",
     }
     
-    def __init__(self):
+    def __init__(self, backfill: bool = False):
         import discord
         from discord import app_commands
         
         self.cfg = _get_config()
         self.guild_id = int(self.cfg["guild_id"]) if self.cfg["guild_id"].isdigit() else 0
         self.operator_id = int(self.cfg["operator_id"]) if self.cfg["operator_id"].isdigit() else 0
+        self._backfill = backfill
         
         intents = discord.Intents.default()
         intents.message_content = False  # slash commands only; avoid privileged intent
@@ -375,13 +480,18 @@ class DiscordGateway:
         async def cmd_help(interaction: discord.Interaction):
             embed = discord.Embed(
                 title="Trading Bot Discord Console",
-                description="Read-only monitoring and operator control. **Discord cannot buy/sell.**",
+                description=(
+                    "Read-only monitoring and operator control. **Discord cannot buy/sell.**\n\n"
+                    "⚠️ **IMPORTANT**: Discord REPORTS trades; it does NOT execute them.\n"
+                    "RH Chain trades (ID 4663) will NOT appear in Phantom/Solana wallets."
+                ),
                 color=discord.Color.blue()
             )
             embed.add_field(
                 name="Read-only Commands",
                 value=(
-                    "`/status` - System status, mode, open positions\n"
+                    "`/status` - System status, mode, chain info\n"
+                    "`/wallets` - Wallet addresses (no private keys)\n"
                     "`/positions` - Current open positions\n"
                     "`/pnl` - Realized P&L summary\n"
                     "`/risk` - Risk limits and budget\n"
@@ -407,6 +517,10 @@ class DiscordGateway:
         @self.tree.command(name="status", description="System status overview", guild=guild)
         async def cmd_status(interaction: discord.Interaction):
             await self._cmd_status(interaction)
+        
+        @self.tree.command(name="wallets", description="Wallet addresses (read-only, no private keys)", guild=guild)
+        async def cmd_wallets(interaction: discord.Interaction):
+            await self._cmd_wallets(interaction)
         
         @self.tree.command(name="positions", description="Current open positions", guild=guild)
         async def cmd_positions(interaction: discord.Interaction):
@@ -478,23 +592,28 @@ class DiscordGateway:
         log.info("Slash commands synced to guild")
         
         _init_state_db()
-        self._publisher_task = asyncio.create_task(self._publisher_loop())
+        self._publisher_task = asyncio.create_task(self._publisher_loop(backfill=self._backfill))
         
         if "operations" in self.channels:
+            mode_str = "BACKFILL MODE" if self._backfill else "LIVE MODE"
             await self.channels["operations"].send(
-                f"**Discord Gateway Online** — {datetime.utcnow().isoformat(timespec='seconds')}Z"
+                f"**Discord Gateway Online** ({mode_str}) — {datetime.utcnow().isoformat(timespec='seconds')}Z\n"
+                f"NOTE: Discord reports trades; it does NOT execute them. "
+                f"RH Chain trades will NOT appear in Phantom/Solana wallets."
             )
     
     async def _cmd_status(self, interaction):
-        """Show system status."""
+        """Show system status with chain info. No private keys exposed."""
         if not self._is_authorized(interaction):
             await self._unauthorized_response(interaction)
             return
 
         import discord
         import stop_control
+        from rh_chain import RH_CHAIN_ID, RH_EXPECTED_ADDRESS, RH_EXPLORER
         from whale_config import (
-            RH_LIVE_ENABLED, RH_TRADE_USD, RH_BUDGET_USD, RH_MAX_OPEN
+            RH_LIVE_ENABLED, RH_TRADE_USD, RH_BUDGET_USD, RH_MAX_OPEN,
+            LIVE_ENABLED
         )
         
         try:
@@ -530,19 +649,73 @@ class DiscordGateway:
             except Exception:
                 pass
         
+        wallet_short = f"{RH_EXPECTED_ADDRESS[:6]}...{RH_EXPECTED_ADDRESS[-4:]}"
+        
         embed = discord.Embed(
             title="Trading Bot Status",
+            description="Discord reports trades; it does NOT execute them.",
             color=discord.Color.green() if mode == "ACTIVE" else discord.Color.red()
         )
-        embed.add_field(name="RH Live", value="ENABLED" if RH_LIVE_ENABLED else "DISABLED", inline=True)
-        embed.add_field(name="Solana", value="DISABLED", inline=True)
+        embed.add_field(
+            name="RH Live",
+            value=f"{'ENABLED' if RH_LIVE_ENABLED else 'DISABLED'}\nChain ID {RH_CHAIN_ID}\nWallet: `{wallet_short}`",
+            inline=True
+        )
+        embed.add_field(
+            name="Solana",
+            value=f"LIVE DISABLED\nLIVE_ENABLED={LIVE_ENABLED}\n*RH trades ≠ Phantom*",
+            inline=True
+        )
         embed.add_field(name="Stop Mode", value=f"{mode} (gen={gen})", inline=True)
         embed.add_field(name="Open Positions", value=f"{open_count}/{RH_MAX_OPEN}", inline=True)
         embed.add_field(name="Budget Left", value=f"${budget_left:.2f}", inline=True)
         embed.add_field(name="Trade Size", value=f"${RH_TRADE_USD:.0f}", inline=True)
         embed.add_field(name="GoPlus", value=gp_status, inline=True)
         embed.add_field(name="Telegram", value="parallel control", inline=True)
-        embed.set_footer(text=f"UTC: {datetime.utcnow().isoformat(timespec='seconds')}")
+        embed.set_footer(text=f"UTC: {datetime.utcnow().isoformat(timespec='seconds')} | Explorer: {RH_EXPLORER}")
+        
+        await interaction.response.send_message(embed=embed)
+    
+    async def _cmd_wallets(self, interaction):
+        """Show wallet addresses (read-only). No private keys exposed."""
+        if not self._is_authorized(interaction):
+            await self._unauthorized_response(interaction)
+            return
+
+        import discord
+        from rh_chain import RH_CHAIN_ID, RH_EXPECTED_ADDRESS, RH_EXPLORER
+        from whale_config import RH_LIVE_ENABLED, LIVE_ENABLED
+        
+        embed = discord.Embed(
+            title="Wallet Addresses (Read-Only)",
+            description="**No private keys are exposed here or anywhere in Discord.**",
+            color=discord.Color.blue()
+        )
+        
+        wallet_short = f"{RH_EXPECTED_ADDRESS[:6]}...{RH_EXPECTED_ADDRESS[-4:]}"
+        rh_link = f"{RH_EXPLORER}/address/{RH_EXPECTED_ADDRESS}"
+        embed.add_field(
+            name="Robinhood Chain Wallet",
+            value=(
+                f"Address: `{wallet_short}`\n"
+                f"Chain: Robinhood (ID {RH_CHAIN_ID})\n"
+                f"Status: {'LIVE ENABLED' if RH_LIVE_ENABLED else 'DISABLED'}\n"
+                f"[View on Explorer]({rh_link})"
+            ),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="Solana Wallet",
+            value=(
+                f"Status: LIVE DISABLED (LIVE_ENABLED={LIVE_ENABLED})\n"
+                f"*Solana trading is suspended*\n"
+                f"*RH Chain trades will NOT appear in Phantom*"
+            ),
+            inline=False
+        )
+        
+        embed.set_footer(text="Discord is read-only. Private keys are never transmitted.")
         
         await interaction.response.send_message(embed=embed)
     
@@ -884,18 +1057,22 @@ class DiscordGateway:
         else:
             await interaction.followup.send(f"RESUME FAILED/DEGRADED: {out.message}", ephemeral=True)
     
-    async def _publisher_loop(self):
-        """Poll for NEW rows and post to mapped channels. Never modify trading tables."""
-        log.info("Event publisher started")
+    async def _publisher_loop(self, backfill: bool = False):
+        """Poll for NEW rows and post to mapped channels. Never modify trading tables.
+        
+        Args:
+            backfill: If True, replay historical events. Default False seeds to MAX(id).
+        """
+        log.info(f"Event publisher started (backfill={backfill})")
         
         hold_aggregator: dict[str, list] = {}
         last_aggregate_post = time.time()
         
         while self._running:
             try:
-                await self._publish_decisions(hold_aggregator)
-                await self._publish_trades()
-                await self._publish_stop_events()
+                await self._publish_decisions(hold_aggregator, backfill=backfill)
+                await self._publish_trades(backfill=backfill)
+                await self._publish_stop_events(backfill=backfill)
                 
                 if time.time() - last_aggregate_post > 300 and hold_aggregator:
                     await self._post_aggregated_holds(hold_aggregator)
@@ -907,20 +1084,30 @@ class DiscordGateway:
             
             await asyncio.sleep(10)
     
-    async def _publish_decisions(self, hold_aggregator: dict):
-        """Publish new decision records."""
+    async def _publish_decisions(self, hold_aggregator: dict, backfill: bool = False):
+        """Publish new decision records.
+        
+        IMPORTANT: BUY/SELL decisions go to #signals with DECISION wording.
+        They are NOT executions — executions come from rh_live_trades with tx hashes.
+        """
         trading_db = ROOT / "data" / "memecoins.db"
         if not trading_db.exists():
             return
         
         last_id, _ = _get_checkpoint("rh_decisions")
         
+        if last_id is None and not backfill:
+            _seed_checkpoint_to_max("rh_decisions", trading_db)
+            return
+        
+        effective_last_id = last_id if last_id is not None else 0
+        
         try:
             conn = sqlite3.connect(trading_db, timeout=10)
             rows = conn.execute("""
                 SELECT id, ts, decision, symbol, asset, security_status, risk_code
                 FROM rh_decisions WHERE id > ? ORDER BY id LIMIT 20
-            """, (last_id,)).fetchall()
+            """, (effective_last_id,)).fetchall()
             conn.close()
         except Exception as e:
             log.error(f"Decision query error: {e}")
@@ -938,19 +1125,23 @@ class DiscordGateway:
                 continue
             
             channel_name = None
+            msg_prefix = ""
             if decision == "BUY":
-                channel_name = "trade-executions"
+                channel_name = "signals"
+                msg_prefix = "BUY DECISION / NOT EXECUTED"
             elif decision == "SELL":
-                channel_name = "trade-executions"
+                channel_name = "signals"
+                msg_prefix = "SELL DECISION / NOT YET CONFIRMED"
             elif decision == "BLOCKED":
                 channel_name = "risk-vetoes"
+                msg_prefix = "BLOCKED"
                 if sec and "goplus" in sec.lower():
                     channel_name = "security"
             
             if channel_name and channel_name in self.channels:
                 ts_str = datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "?"
                 addr_short = (asset or "")[:12] + "..." if asset else ""
-                msg = f"**{decision}** {sym or addr_short} @ {ts_str} | risk={risk or '?'} sec={sec or '?'}"
+                msg = f"**{msg_prefix}** {sym or addr_short} @ {ts_str} | risk={risk or '?'} sec={sec or '?'}"
                 try:
                     await self.channels[channel_name].send(msg)
                 except Exception as e:
@@ -979,13 +1170,29 @@ class DiscordGateway:
             except Exception as e:
                 log.error(f"Failed to post aggregated: {e}")
     
-    async def _publish_trades(self):
-        """Publish new trade executions."""
+    async def _publish_trades(self, backfill: bool = False):
+        """Publish new trade executions from rh_live_trades.
+        
+        IMPORTANT:
+        - BUY EXECUTED requires buy_tx not null — never post without tx hash
+        - SELL EXECUTED requires sell_tx and closed_at
+        - Dedup via posted_events using event ids rh-buy:<txhash>, rh-sell:<txhash>
+        - Include Chain: Robinhood Chain, Chain ID 4663, explorer link
+        - These trades will NOT appear in Phantom/Solana wallet
+        """
+        from rh_chain import RH_CHAIN_ID, RH_EXPLORER, RH_EXPECTED_ADDRESS
+        
         trading_db = ROOT / "data" / "memecoins.db"
         if not trading_db.exists():
             return
         
         last_id, _ = _get_checkpoint("rh_live_trades")
+        
+        if last_id is None and not backfill:
+            _seed_checkpoint_to_max("rh_live_trades", trading_db)
+            return
+        
+        effective_last_id = last_id if last_id is not None else 0
         
         try:
             conn = sqlite3.connect(trading_db, timeout=10)
@@ -993,7 +1200,7 @@ class DiscordGateway:
                 SELECT id, symbol, address, source, usd_spent, buy_tx, closed_at, 
                        close_reason, pnl_usd, sell_tx
                 FROM rh_live_trades WHERE id > ? ORDER BY id LIMIT 10
-            """, (last_id,)).fetchall()
+            """, (effective_last_id,)).fetchall()
             conn.close()
         except Exception as e:
             log.error(f"Trade query error: {e}")
@@ -1003,20 +1210,43 @@ class DiscordGateway:
         if not channel:
             return
         
+        wallet_short = f"{RH_EXPECTED_ADDRESS[:6]}...{RH_EXPECTED_ADDRESS[-4:]}"
+        
         for (row_id, sym, addr, src, usd, buy_tx, closed_at, 
              close_reason, pnl, sell_tx) in rows:
             
+            msg = None
+            event_id = None
+            
             if buy_tx and not closed_at:
+                event_id = f"rh-buy:{buy_tx}"
+                if _is_event_posted(event_id):
+                    log.debug(f"Skipping duplicate buy event: {event_id}")
+                    _set_checkpoint("rh_live_trades", row_id, time.time())
+                    continue
+                
+                explorer_link = f"{RH_EXPLORER}/tx/{buy_tx}"
                 msg = (
                     f"**BUY EXECUTED** {sym or '?'}\n"
+                    f"Chain: Robinhood Chain (ID {RH_CHAIN_ID}) | Executor: `{wallet_short}`\n"
                     f"Source: {src} | Amount: ${usd:.2f}\n"
-                    f"TX: `{buy_tx}`"
+                    f"TX: `{buy_tx[:16]}...`\n"
+                    f"Explorer: {explorer_link}"
                 )
             elif closed_at and sell_tx:
+                event_id = f"rh-sell:{sell_tx}"
+                if _is_event_posted(event_id):
+                    log.debug(f"Skipping duplicate sell event: {event_id}")
+                    _set_checkpoint("rh_live_trades", row_id, time.time())
+                    continue
+                
+                explorer_link = f"{RH_EXPLORER}/tx/{sell_tx}"
                 msg = (
                     f"**SELL EXECUTED** {sym or '?'}\n"
+                    f"Chain: Robinhood Chain (ID {RH_CHAIN_ID}) | Executor: `{wallet_short}`\n"
                     f"Reason: {close_reason} | P&L: ${pnl:+.2f}\n"
-                    f"TX: `{sell_tx}`"
+                    f"TX: `{sell_tx[:16]}...`\n"
+                    f"Explorer: {explorer_link}"
                 )
             else:
                 _set_checkpoint("rh_live_trades", row_id, time.time())
@@ -1024,12 +1254,14 @@ class DiscordGateway:
             
             try:
                 await channel.send(msg)
+                if event_id:
+                    _mark_event_posted(event_id, "trade-executions")
             except Exception as e:
                 log.error(f"Failed to post trade: {e}")
             
             _set_checkpoint("rh_live_trades", row_id, time.time())
     
-    async def _publish_stop_events(self):
+    async def _publish_stop_events(self, backfill: bool = False):
         """Publish stop_control events (HALT/RESUME)."""
         import stop_control
         
@@ -1040,12 +1272,18 @@ class DiscordGateway:
         
         last_id, _ = _get_checkpoint("stop_events")
         
+        if last_id is None and not backfill:
+            _seed_stop_events_checkpoint()
+            return
+        
+        effective_last_id = last_id if last_id is not None else 0
+        
         try:
             conn = sqlite3.connect(stop_control.DB_PATH, timeout=10)
             rows = conn.execute("""
                 SELECT rowid, event_type, generation, requested_by, reason
                 FROM stop_events WHERE rowid > ? ORDER BY rowid LIMIT 10
-            """, (last_id,)).fetchall()
+            """, (effective_last_id,)).fetchall()
             conn.close()
         except Exception as e:
             log.error(f"Stop events query error: {e}")
@@ -1111,10 +1349,83 @@ class DiscordGateway:
         await self.client.close()
 
 
+async def post_correction_notice() -> int:
+    """Post the reporting correction notice to #operations. One-shot, then exit."""
+    try:
+        import discord
+    except ImportError:
+        print("FAILED: discord.py not installed")
+        return 1
+    
+    cfg = _get_config()
+    if not cfg["token"]:
+        print("FAILED: DISCORD_BOT_TOKEN missing")
+        return 1
+    if not cfg["guild_id"] or not cfg["guild_id"].isdigit():
+        print("FAILED: DISCORD_GUILD_ID missing or invalid")
+        return 1
+    
+    guild_id = int(cfg["guild_id"])
+    
+    intents = discord.Intents.default()
+    intents.message_content = False
+    client = discord.Client(intents=intents)
+    result = {"success": False}
+    
+    @client.event
+    async def on_ready():
+        guild = client.get_guild(guild_id)
+        if not guild:
+            print(f"FAILED: Cannot access guild {guild_id}")
+            result["success"] = False
+            await client.close()
+            return
+        
+        ops_channel = None
+        for ch in guild.text_channels:
+            if ch.name.lower() == "operations":
+                ops_channel = ch
+                break
+        
+        if not ops_channel:
+            print("FAILED: #operations channel not found")
+            result["success"] = False
+            await client.close()
+            return
+        
+        try:
+            await ops_channel.send(REPORTING_CORRECTION_NOTICE)
+            print(f"SUCCESS: Posted correction notice to #{ops_channel.name}")
+            result["success"] = True
+        except Exception as e:
+            print(f"FAILED: Could not post notice: {e}")
+            result["success"] = False
+        
+        await client.close()
+    
+    try:
+        await asyncio.wait_for(client.start(cfg["token"]), timeout=30.0)
+    except asyncio.TimeoutError:
+        print("FAILED: Connection timeout")
+        return 1
+    except discord.LoginFailure:
+        print("FAILED: Invalid bot token")
+        return 1
+    except Exception as e:
+        print(f"FAILED: {type(e).__name__}: {e}")
+        return 1
+    
+    return 0 if result["success"] else 1
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="Discord operations console gateway")
     p.add_argument("--check", action="store_true", help="Check env/dependencies only")
     p.add_argument("--connect-test", action="store_true", help="Test connection only")
+    p.add_argument("--backfill", action="store_true",
+                   help="Replay historical events (default: seed to MAX, no replay)")
+    p.add_argument("--post-correction-notice", action="store_true",
+                   help="Post reporting correction notice to #operations and exit")
     args = p.parse_args()
     
     if args.check:
@@ -1123,8 +1434,11 @@ def main() -> int:
     if args.connect_test:
         return asyncio.run(connect_test())
     
+    if args.post_correction_notice:
+        return asyncio.run(post_correction_notice())
+    
     _lock_fh = _acquire_single_instance()
-    gateway = DiscordGateway()
+    gateway = DiscordGateway(backfill=args.backfill)
     
     try:
         return asyncio.run(gateway.run())

@@ -1,6 +1,8 @@
-"""Offline Phase 2D Discord gateway tests. Network/signer/RPC must explode if called.
+"""Offline Phase 2D/2D.2 Discord gateway tests. Network/signer/RPC must explode if called.
 
-Tests cover the 39 requirements from Sean's Phase 2D brief:
+Tests cover requirements from Sean's Phase 2D and Phase 2D.2 briefs:
+
+=== PHASE 2D (original 39 requirements) ===
   1. Auth for ALL control commands: guild + operator check
   2. Read-only commands accessible
   3. Halt ordering: defer → request_halt → HALT_ACTIVE only on success
@@ -40,6 +42,38 @@ Tests cover the 39 requirements from Sean's Phase 2D brief:
   37. Logging to logs/discord_gateway.log
   38. Token redaction in all output
   39. No private key imports
+
+=== PHASE 2D.2 (30 additional requirements) ===
+  40. BUY/SELL decisions → #signals with "BUY DECISION / NOT EXECUTED" wording
+  41. Never label rh_decisions as EXECUTED
+  42. _get_checkpoint returns None for unseen tables (not 0)
+  43. Seed to MAX(id) on first startup (no silent historical replay)
+  44. Optional --backfill flag for historical publish
+  45. Preserve existing checkpoints on upgrade
+  46. Dedup executions via posted_events using rh-buy:<txhash> / rh-sell:<txhash>
+  47. BUY EXECUTED only from rh_live_trades with buy_tx not null
+  48. SELL EXECUTED requires sell_tx and closed_at
+  49. Execution messages include Chain: Robinhood Chain, Chain ID 4663
+  50. Execution messages include Executor wallet (shortened)
+  51. Execution messages include explorer link (RH_EXPLORER/tx/<hash>)
+  52. Never BUY EXECUTED without tx hash
+  53. /status shows RH LIVE chain 4663 + wallet shortened
+  54. /status shows Solana LIVE DISABLED / LIVE_ENABLED False
+  55. /wallets read-only command exists
+  56. No private keys in /status or /wallets
+  57. Clarify RH executions ≠ Phantom/Solana wallet
+  58. --post-correction-notice option for ops notice
+  59. REPORTING_CORRECTION_NOTICE constant defined
+  60. No /buy /sell /trade commands
+  61. CHANNEL_ROUTES maps BUY→signals (not trade-executions in loop)
+  62. _publish_decisions routes to #signals for BUY/SELL
+  63. _publish_trades routes to #trade-executions (only with tx)
+  64. stop events → #operations + #audit-log
+  65. BLOCKED → #risk-vetoes (security if GoPlus-related)
+  66. _is_event_posted and _mark_event_posted helper functions
+  67. _seed_checkpoint_to_max helper function
+  68. Cross-platform single-instance lock (fcntl/msvcrt)
+  69. Help mentions RH trades ≠ Phantom
 """
 from __future__ import annotations
 
@@ -347,7 +381,7 @@ class TestPublisherCheckpoint(OfflineGuard):
             dg._init_state_db()
             
             last_id, last_ts = dg._get_checkpoint("test_table")
-            self.assertEqual(last_id, 0)
+            self.assertIsNone(last_id)
             
             dg._set_checkpoint("test_table", 42, 1234.5)
             last_id, last_ts = dg._get_checkpoint("test_table")
@@ -662,6 +696,390 @@ class TestDataDiscordGitignore(unittest.TestCase):
         
         self.assertIn("data", str(dg.STATE_DIR))
         self.assertIn("discord", str(dg.STATE_DIR))
+
+
+class TestPhase2D2DecisionRouting(OfflineGuard):
+    """REQ 40-42: BUY/SELL decisions go to #signals, never as EXECUTED."""
+
+    def test_publish_decisions_routes_to_signals(self):
+        """REQ 40: BUY/SELL decisions go to #signals channel."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_decisions)
+        self.assertIn('channel_name = "signals"', source)
+        self.assertIn("BUY DECISION / NOT EXECUTED", source)
+        self.assertIn("SELL DECISION / NOT YET CONFIRMED", source)
+
+    def test_decisions_not_labeled_executed(self):
+        """REQ 41: rh_decisions are NEVER labeled as EXECUTED."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_decisions)
+        self.assertNotIn("BUY EXECUTED", source)
+        self.assertNotIn("SELL EXECUTED", source)
+
+    def test_channel_routes_buy_to_signals(self):
+        """REQ 61: CHANNEL_ROUTES maps BUY→signals."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        routes = dg.DiscordGateway.CHANNEL_ROUTES
+        self.assertEqual(routes["BUY"], "signals")
+        self.assertEqual(routes["SELL"], "signals")
+
+
+class TestPhase2D2CheckpointSeeding(OfflineGuard):
+    """REQ 42-45: Checkpoint seeding to MAX(id), no silent replay."""
+
+    def test_get_checkpoint_returns_none_for_unseen(self):
+        """REQ 42: _get_checkpoint returns None for unseen tables."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        tmp = Path(tempfile.mkdtemp())
+        with mock.patch.object(dg, "STATE_DB", tmp / "state.sqlite3"):
+            dg._init_state_db()
+            last_id, _ = dg._get_checkpoint("never_seen_table")
+            self.assertIsNone(last_id)
+
+    def test_seed_checkpoint_to_max_function_exists(self):
+        """REQ 43, 67: _seed_checkpoint_to_max helper exists."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        self.assertTrue(hasattr(dg, "_seed_checkpoint_to_max"))
+        self.assertTrue(callable(dg._seed_checkpoint_to_max))
+
+    def test_backfill_argument_exists(self):
+        """REQ 44: --backfill argument for historical publish."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.main)
+        self.assertIn("--backfill", source)
+
+    def test_publish_decisions_checks_none_checkpoint(self):
+        """REQ 43: Publisher seeds to MAX when checkpoint is None."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_decisions)
+        self.assertIn("last_id is None", source)
+        self.assertIn("_seed_checkpoint_to_max", source)
+
+
+class TestPhase2D2Dedup(OfflineGuard):
+    """REQ 46: Dedup executions via posted_events."""
+
+    def test_dedup_helper_functions_exist(self):
+        """REQ 66: _is_event_posted and _mark_event_posted exist."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        self.assertTrue(hasattr(dg, "_is_event_posted"))
+        self.assertTrue(hasattr(dg, "_mark_event_posted"))
+
+    def test_dedup_functions_work(self):
+        """REQ 46: Dedup via posted_events using event IDs."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        tmp = Path(tempfile.mkdtemp())
+        with mock.patch.object(dg, "STATE_DB", tmp / "state.sqlite3"):
+            dg._init_state_db()
+            
+            event_id = "rh-buy:0x123abc"
+            self.assertFalse(dg._is_event_posted(event_id))
+            
+            dg._mark_event_posted(event_id, "trade-executions")
+            self.assertTrue(dg._is_event_posted(event_id))
+
+    def test_publish_trades_uses_dedup(self):
+        """REQ 46: _publish_trades uses dedup with tx hash event IDs."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_trades)
+        self.assertIn("rh-buy:", source)
+        self.assertIn("rh-sell:", source)
+        self.assertIn("_is_event_posted", source)
+        self.assertIn("_mark_event_posted", source)
+
+
+class TestPhase2D2ExecutionMessages(OfflineGuard):
+    """REQ 47-52: Execution messages only from rh_live_trades with tx."""
+
+    def test_buy_executed_requires_buy_tx(self):
+        """REQ 47, 52: BUY EXECUTED only with buy_tx not null."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_trades)
+        self.assertIn("if buy_tx and not closed_at", source)
+        self.assertIn("BUY EXECUTED", source)
+
+    def test_sell_executed_requires_sell_tx_and_closed_at(self):
+        """REQ 48: SELL EXECUTED requires sell_tx and closed_at."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_trades)
+        self.assertIn("elif closed_at and sell_tx", source)
+        self.assertIn("SELL EXECUTED", source)
+
+    def test_execution_includes_chain_info(self):
+        """REQ 49: Execution includes Chain: Robinhood Chain, Chain ID 4663."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_trades)
+        self.assertIn("RH_CHAIN_ID", source)
+        self.assertIn("Robinhood Chain", source)
+
+    def test_execution_includes_executor_wallet(self):
+        """REQ 50: Execution includes executor wallet (shortened)."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_trades)
+        self.assertIn("wallet_short", source)
+        self.assertIn("Executor", source)
+
+    def test_execution_includes_explorer_link(self):
+        """REQ 51: Execution includes explorer link."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_trades)
+        self.assertIn("RH_EXPLORER", source)
+        self.assertIn("explorer_link", source)
+
+
+class TestPhase2D2StatusCommand(OfflineGuard):
+    """REQ 53-54, 56-57: /status shows chain info and Solana disabled."""
+
+    def test_status_shows_chain_id(self):
+        """REQ 53: /status shows RH LIVE chain 4663 + wallet."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._cmd_status)
+        self.assertIn("RH_CHAIN_ID", source)
+        self.assertIn("wallet_short", source)
+
+    def test_status_shows_solana_disabled(self):
+        """REQ 54: /status shows Solana LIVE DISABLED / LIVE_ENABLED."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._cmd_status)
+        self.assertIn("LIVE DISABLED", source)
+        self.assertIn("LIVE_ENABLED", source)
+
+    def test_status_no_private_keys(self):
+        """REQ 56: No private keys in /status."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._cmd_status)
+        self.assertNotIn("PRIVATE_KEY", source)
+        self.assertNotIn("private_key", source)
+
+    def test_status_clarifies_rh_not_phantom(self):
+        """REQ 57: Clarify RH executions ≠ Phantom/Solana wallet."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._cmd_status)
+        self.assertIn("Phantom", source)
+
+
+class TestPhase2D2WalletsCommand(OfflineGuard):
+    """REQ 55-56: /wallets read-only command."""
+
+    def test_wallets_command_exists(self):
+        """REQ 55: /wallets command is registered."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._register_commands)
+        self.assertIn('"wallets"', source)
+
+    def test_wallets_method_exists(self):
+        """REQ 55: _cmd_wallets method exists."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        self.assertTrue(hasattr(dg.DiscordGateway, "_cmd_wallets"))
+
+    def test_wallets_no_private_keys(self):
+        """REQ 56: No private keys in /wallets."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._cmd_wallets)
+        self.assertNotIn("PRIVATE_KEY", source)
+        self.assertNotIn("private_key", source)
+        self.assertIn("No private keys", source)
+
+
+class TestPhase2D2CorrectionNotice(OfflineGuard):
+    """REQ 58-59: Operations notice about reporting correction."""
+
+    def test_correction_notice_constant_exists(self):
+        """REQ 59: REPORTING_CORRECTION_NOTICE constant defined."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        self.assertTrue(hasattr(dg, "REPORTING_CORRECTION_NOTICE"))
+        notice = dg.REPORTING_CORRECTION_NOTICE
+        self.assertIn("REPORTING CORRECTION", notice)
+        self.assertIn("Decisions", notice)
+        self.assertIn("Executions", notice)
+
+    def test_post_correction_notice_option(self):
+        """REQ 58: --post-correction-notice option exists."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.main)
+        self.assertIn("--post-correction-notice", source)
+
+    def test_post_correction_notice_function_exists(self):
+        """REQ 58: post_correction_notice function exists."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        self.assertTrue(hasattr(dg, "post_correction_notice"))
+
+
+class TestPhase2D2NoBuySellCommands(OfflineGuard):
+    """REQ 60: No /buy /sell /trade commands."""
+
+    def test_no_buy_command(self):
+        """No /buy command registered."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._register_commands)
+        lines = [l for l in source.split("\n") if 'name="buy"' in l.lower()]
+        self.assertEqual(len(lines), 0, "Found /buy command registration")
+
+    def test_no_sell_command(self):
+        """No /sell command registered."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._register_commands)
+        lines = [l for l in source.split("\n") if 'name="sell"' in l.lower() and "@self.tree.command" in source[:source.find(l)]]
+        self.assertEqual(len(lines), 0, "Found /sell command registration")
+
+    def test_no_trade_command(self):
+        """No /trade command registered."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._register_commands)
+        lines = [l for l in source.split("\n") if 'name="trade"' in l.lower()]
+        self.assertEqual(len(lines), 0, "Found /trade command registration")
+
+
+class TestPhase2D2ChannelRoutingCorrect(OfflineGuard):
+    """REQ 62-65: Correct channel routing in publisher loop."""
+
+    def test_publish_decisions_routes_blocked_correctly(self):
+        """REQ 65: BLOCKED → #risk-vetoes (security if GoPlus)."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_decisions)
+        self.assertIn('channel_name = "risk-vetoes"', source)
+        self.assertIn('channel_name = "security"', source)
+        self.assertIn("goplus", source.lower())
+
+    def test_publish_trades_routes_to_trade_executions(self):
+        """REQ 63: _publish_trades routes to #trade-executions."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_trades)
+        self.assertIn('channels.get("trade-executions")', source)
+
+    def test_stop_events_route_to_operations_and_audit(self):
+        """REQ 64: stop events → #operations + #audit-log."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._publish_stop_events)
+        self.assertIn('channels.get("operations")', source)
+        self.assertIn('channels.get("audit-log")', source)
+
+
+class TestPhase2D2CrossPlatformLock(OfflineGuard):
+    """REQ 68: Cross-platform single-instance lock."""
+
+    def test_lock_uses_fcntl_on_unix(self):
+        """REQ 68: Uses fcntl on Unix."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg._acquire_single_instance)
+        self.assertIn("fcntl", source)
+        self.assertIn("msvcrt", source)
+        self.assertIn("sys.platform", source)
+
+
+class TestPhase2D2HelpMentionsPhantom(OfflineGuard):
+    """REQ 69: Help mentions RH trades ≠ Phantom."""
+
+    def test_help_mentions_rh_not_phantom(self):
+        """REQ 69: /help mentions RH trades won't appear in Phantom."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._register_commands)
+        self.assertIn("Phantom", source)
+        self.assertIn("4663", source)
+
+
+class TestPhase2D2Integration(OfflineGuard):
+    """Integration tests for Phase 2D.2 requirements."""
+
+    def test_gateway_class_docstring_mentions_reporting(self):
+        """Class docstring mentions Discord reports, doesn't execute."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        docstring = dg.DiscordGateway.__doc__
+        self.assertIn("reports", docstring.lower())
+        self.assertIn("execute", docstring.lower())
+
+    def test_module_docstring_mentions_channel_routing(self):
+        """Module docstring documents correct channel routing."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        docstring = dg.__doc__
+        self.assertIn("signals", docstring.lower())
+        self.assertIn("trade-executions", docstring.lower())
+
+    def test_backfill_flag_passed_to_publisher(self):
+        """Backfill flag is passed through to publisher loop."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        source = inspect.getsource(dg.DiscordGateway._on_ready)
+        self.assertIn("backfill=self._backfill", source)
+
+    def test_seed_stop_events_checkpoint_exists(self):
+        """_seed_stop_events_checkpoint helper function exists."""
+        import discord_gateway as dg
+        importlib.reload(dg)
+        
+        self.assertTrue(hasattr(dg, "_seed_stop_events_checkpoint"))
+        self.assertTrue(callable(dg._seed_stop_events_checkpoint))
 
 
 if __name__ == "__main__":
