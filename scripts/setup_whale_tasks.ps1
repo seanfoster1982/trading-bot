@@ -48,11 +48,19 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 schtasks /Delete /TN "TradingBotRhLive" /F 2>$null
-schtasks /Create /TN "TradingBotRhLive" /TR "`"$Pyw`" `"$RhLive`"" /SC MINUTE /MO 15 /ST 00:10 /F
+schtasks /Create /TN "TradingBotRhLive" /TR "`"$Pyw`" `"$RhLive`"" /SC MINUTE /MO 5 /F
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "OK  TradingBotRhLive - every 15 min (ARMED: real RH ETH swaps)" -ForegroundColor Yellow
+    Write-Host "OK  TradingBotRhLive - every 5 min (ARMED: $3 micros, 10 slots)" -ForegroundColor Yellow
 } else {
     Write-Host "FAIL TradingBotRhLive" -ForegroundColor Red
+}
+
+schtasks /Delete /TN "TradingBotRhInbox" /F 2>$null
+schtasks /Create /TN "TradingBotRhInbox" /TR "`"$Pyw`" `"$RhLive`" --inbox" /SC MINUTE /MO 1 /F
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "OK  TradingBotRhInbox - Telegram STATUS/HALT/RESUME every 1 min" -ForegroundColor Green
+} else {
+    Write-Host "FAIL TradingBotRhInbox" -ForegroundColor Red
 }
 
 schtasks /Delete /TN "TradingBotDigest" /F 2>$null
@@ -75,7 +83,6 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host ""
 Write-Host "Whale Trace polling every 15 min. Telegram: shadow opens/closes + digests." -ForegroundColor Yellow
-Write-Host "TradingBotRhLive is ARMED. Confirm .env has EVM_PRIVATE_KEY, ZERO_EX_API_KEY, TELEGRAM_* then run:" -ForegroundColor Yellow
+Write-Host "TradingBotRhLive every 5 min, 10 x $3 micros, Telegram STATUS/HALT/RESUME." -ForegroundColor Yellow
 Write-Host "  .venv\Scripts\python.exe scripts\rh_live_trader.py --status" -ForegroundColor Yellow
-Write-Host "  .venv\Scripts\python.exe scripts\rh_live_trader.py --test-telegram" -ForegroundColor Yellow
 Write-Host "Guide: WHALE_BOT.md" -ForegroundColor Yellow

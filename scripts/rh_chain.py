@@ -136,6 +136,30 @@ def is_blocked_token(address: str, symbol: str | None = None,
     return False, ""
 
 
+def classify_listing(
+    *,
+    age_min: float | None,
+    liquidity: float,
+    volume_1h: float,
+    fresh_max_age_min: float,
+    fresh_min_liq: float,
+    fresh_min_vol: float,
+    min_liq: float,
+    min_vol: float,
+) -> str | None:
+    """Return 'fresh', 'established', or None if it fails the gates."""
+    age = float(age_min) if age_min is not None else 1e9
+    liq = float(liquidity or 0)
+    vol = float(volume_1h or 0)
+    if age <= fresh_max_age_min:
+        if liq < fresh_min_liq or vol < fresh_min_vol:
+            return None
+        return "fresh"
+    if liq < min_liq or vol < min_vol:
+        return None
+    return "established"
+
+
 def validate_quote(
     quote: dict,
     *,

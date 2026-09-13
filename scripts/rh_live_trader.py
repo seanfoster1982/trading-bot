@@ -49,17 +49,22 @@ from whale_config import (  # noqa: E402
     RH_BUDGET_USD,
     RH_EXPECTED_ADDRESS,
     RH_FEE_BUFFER_ETH,
+    RH_FRESH_MAX_AGE_MIN,
+    RH_FRESH_MIN_LIQUIDITY,
+    RH_FRESH_MIN_VOLUME_1H,
     RH_LIVE_ENABLED,
-    RH_MAX_HOLD_HOURS,
+    RH_MAX_HOLD_MINUTES,
+    RH_MAX_NEW_PER_CYCLE,
     RH_MAX_OPEN,
     RH_MAX_REALIZED_LOSS_USD,
     RH_MAX_ROUNDTRIP_COST_PCT,
-    RH_MIN_HOURS_BETWEEN_BUYS,
     RH_MIN_LIQUIDITY,
+    RH_MIN_MINUTES_BETWEEN_BUYS,
     RH_MIN_VOLUME_1H,
     RH_SLIPPAGE_BPS,
     RH_STOP_PCT,
     RH_TRADE_USD,
+    RH_WORKERS,
     SHADOW_BREAK_EVEN_TRIGGER_PCT,
     SHADOW_TAKE_INITIAL_MULT,
 )
@@ -68,6 +73,19 @@ DB_PATH = ROOT / "data" / "memecoins.db"
 WATCHLIST_PATH = ROOT / "data" / "rh_watchlist.json"
 DEXSCREENER = "https://api.dexscreener.com"
 COINGECKO = "https://api.coingecko.com/api/v3/simple/price"
+HALT_FLAG = ROOT / "data" / "cache" / "rh_manual_halt"
+
+
+def is_halted() -> bool:
+    return HALT_FLAG.exists()
+
+
+def set_halted(on: bool) -> None:
+    HALT_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    if on:
+        HALT_FLAG.write_text("1", encoding="utf-8")
+    elif HALT_FLAG.exists():
+        HALT_FLAG.unlink()
 
 
 def _notify(text: str, *, cooldown_key: str | None = None, cooldown_s: int = 0) -> None:
@@ -374,6 +392,12 @@ def scan_dexscreener(client: httpx.Client) -> list[dict]:
             prev = found.get(addr.lower())
             if prev and prev.get("liquidity", 0) >= liq:
                 continue
+            created_ms = p.get("pairCreatedAt") or 0
+            try:
+                created_s = float(created_ms) / 1000.0 if created_ms else 0.0
+            except (TypeError, ValueError):
+                created_s = 0.0
+            age_min = (time.time() - created_s) / 60.0 if created_s else None
             found[addr.lower()] = {
                 "address": addr,
                 "symbol": base.get("symbol") or "?",
@@ -382,6 +406,7 @@ def scan_dexscreener(client: httpx.Client) -> list[dict]:
                 "volume_1h": float((p.get("volume") or {}).get("h1") or 0),
                 "change_1h": float((p.get("priceChange") or {}).get("h1") or 0),
                 "price_usd": float(p.get("priceUsd") or 0),
+                "age_min": age_min,
                 "source": "dexscreener",
             }
     out = []
@@ -390,20 +415,33 @@ def scan_dexscreener(client: httpx.Client) -> list[dict]:
             item["address"], item.get("symbol"), item.get("name"))
         if blocked:
             continue
-        if item.get("liquidity", 0) < RH_MIN_LIQUIDITY:
+        kind = rh.classify_listing(
+            age_min=item.get("age_min"),
+            liquidity=item.get("liquidity") or 0,
+            volume_1h=item.get("volume_1h") or 0,
+            fresh_max_age_min=RH_FRESH_MAX_AGE_MIN,
+            fresh_min_liq=RH_FRESH_MIN_LIQUIDITY,
+            fresh_min_vol=RH_FRESH_MIN_VOLUME_1H,
+            min_liq=RH_MIN_LIQUIDITY,
+            min_vol=RH_MIN_VOLUME_1H,
+        )
+        if not kind:
             continue
-        if item.get("source") != "watchlist" and item.get("volume_1h", 0) < RH_MIN_VOLUME_1H:
-            continue
+        item["source"] = "fresh_listing" if kind == "fresh" else item.get("source")
         out.append(item)
     for w in load_watchlist():
         if w.lower() not in found:
             out.append({
                 "address": w, "symbol": "?", "name": "watchlist",
                 "liquidity": 0.0, "volume_1h": 0.0, "change_1h": 0.0,
-                "source": "watchlist",
+                "age_min": 0.0, "source": "watchlist",
             })
-    out.sort(key=lambda x: x.get("liquidity", 0), reverse=True)
-    return out[:20]
+    def _rank(x):
+        fresh = 0 if x.get("source") == "fresh_listing" else 1
+        age = x.get("age_min") if x.get("age_min") is not None else 1e9
+        return (fresh, age, -float(x.get("volume_1h") or 0))
+    out.sort(key=_rank)
+    return out[:30]
 
 
 def roundtrip_ok(client: httpx.Client, taker: str, token: str,
@@ -447,9 +485,9 @@ def last_buy_at(conn: sqlite3.Connection) -> int:
         "SELECT COALESCE(MAX(opened_at), 0) FROM rh_live_trades").fetchone()[0])
 
 
-def already_traded(conn: sqlite3.Connection, address: str) -> bool:
+def already_open(conn: sqlite3.Connection, address: str) -> bool:
     return conn.execute(
-        "SELECT 1 FROM rh_live_trades WHERE address = ?",
+        "SELECT 1 FROM rh_live_trades WHERE address = ? AND closed_at IS NULL",
         (rh.checksum(address),),
     ).fetchone() is not None
 
@@ -461,7 +499,7 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
     if blocked and cand.get("source") != "watchlist":
         print(f"  skip {cand.get('symbol')}: {reason}")
         return None
-    if already_traded(conn, token):
+    if already_open(conn, token):
         return None
     if eth_px <= 0:
         return None
@@ -587,7 +625,7 @@ def manage_open(client: httpx.Client, conn: sqlite3.Connection, account,
             close_reason = "STOP_LOSS"
         elif took_initial is None and peak >= SHADOW_BREAK_EVEN_TRIGGER_PCT and pct <= 0:
             close_reason = "BREAK_EVEN_STOP"
-        elif now - opened_at >= RH_MAX_HOLD_HOURS * 3600:
+        elif now - opened_at >= RH_MAX_HOLD_MINUTES * 60:
             close_reason = "MAX_HOLD"
         if not close_reason:
             continue
@@ -631,6 +669,7 @@ def manage_open(client: httpx.Client, conn: sqlite3.Connection, account,
 
 
 def cycle() -> None:
+    handle_telegram_commands()
     if not RH_LIVE_ENABLED:
         print("RH live trading disabled in whale_config (RH_LIVE_ENABLED=False)")
         return
@@ -653,6 +692,10 @@ def cycle() -> None:
     with httpx.Client() as client:
         eth_px = eth_price_usd(client)
         manage_open(client, conn, account, eth_px)
+        if is_halted():
+            print("manual HALT — manage-only")
+            conn.close()
+            return
         left = budget_left(conn)
         if left < RH_TRADE_USD:
             print(f"budget exhausted (${left:.2f} left)")
@@ -668,11 +711,11 @@ def cycle() -> None:
             _notify(
                 f"RH DRAWDOWN HALT ${pnl:+.2f} — no new buys.",
                 cooldown_key="drawdown",
-                cooldown_s=6 * 3600,
+                cooldown_s=30 * 60,
             )
             conn.close()
             return
-        if last_buy_at(conn) and time.time() - last_buy_at(conn) < RH_MIN_HOURS_BETWEEN_BUYS * 3600:
+        if last_buy_at(conn) and time.time() - last_buy_at(conn) < RH_MIN_MINUTES_BETWEEN_BUYS * 60:
             print("buy spacing — manage-only")
             conn.close()
             return
@@ -686,9 +729,12 @@ def cycle() -> None:
             return
         cands = scan_dexscreener(client)
         print(f"{len(cands)} candidate(s) after liquidity/ticker filters")
+        bought = 0
         for cand in cands:
-            if try_buy(client, conn, account, cand, eth_px):
+            if open_count(conn) >= RH_MAX_OPEN or bought >= RH_MAX_NEW_PER_CYCLE:
                 break
+            if try_buy(client, conn, account, cand, eth_px):
+                bought += 1
     conn.close()
 
 
@@ -710,6 +756,8 @@ def status() -> None:
         print("MISMATCH — refusing to trade this key.")
     print(f"ETH: {bal:.6f} (~${bal * eth_px:,.2f} @ ${eth_px:,.2f})")
     print(f"RH_LIVE_ENABLED: {RH_LIVE_ENABLED}")
+    print(f"Manual halt: {'YES' if is_halted() else 'no'}")
+    print(f"Slots: {RH_MAX_OPEN} workers / ${RH_TRADE_USD:.0f} micro")
     print(f"0x API key: {'yes' if has_0x_key() else 'NO — quotes disabled'}")
     print(
         f"Telegram: {'yes' if telegram_notifier.is_configured() else 'NO — fills will not alert'}"
@@ -733,7 +781,8 @@ def scan() -> None:
     print(f"{len(cands)} tradable after filters (min liq ${RH_MIN_LIQUIDITY:,.0f})")
     for c in cands:
         print(f"  {c.get('symbol'):12} liq=${c.get('liquidity', 0):,.0f}  "
-              f"vol1h=${c.get('volume_1h', 0):,.0f}  {c.get('address')}  [{c.get('source')}]")
+              f"vol1h=${c.get('volume_1h', 0):,.0f}  age={c.get('age_min') or 0:.0f}m  "
+              f"{c.get('address')}  [{c.get('source')}]")
 
 
 def test_plumbing() -> None:
@@ -778,13 +827,54 @@ def build_report() -> str:
     pnl = realized_pnl(conn)
     n_open = open_count(conn)
     conn.close()
-    flag = "ARMED" if RH_LIVE_ENABLED else "DISABLED"
+    flag = "HALTED" if is_halted() else ("ARMED" if RH_LIVE_ENABLED else "DISABLED")
     return (
         f"<b>Robinhood Chain live ({flag})</b>\n"
-        f"  wallet {RH_EXPECTED_ADDRESS[:8]}…  budget ${RH_BUDGET_USD:.0f} / "
-        f"${RH_TRADE_USD:.0f} per trade\n"
+        f"  {RH_WORKERS} slots x ${RH_TRADE_USD:.0f}  budget ${RH_BUDGET_USD:.0f}\n"
         f"  closed {n}  open {n_open}  realized {pnl:+.2f}"
     )
+
+
+def handle_telegram_commands() -> None:
+    cmds = telegram_notifier.poll_commands()
+    if not cmds:
+        return
+    init_db()
+    for item in cmds:
+        cmd = item["cmd"]
+        if cmd == "HELP":
+            telegram_notifier.send(
+                "<b>RH commands</b> (Sean only)\n"
+                "STATUS — wallet, opens, P&amp;L\n"
+                "SCAN — top fresh RH listings (no buy)\n"
+                "HALT / STOP — no new buys; still manages exits\n"
+                "RESUME — allow new buys\n"
+                "Grok/ChatGPT: advise in this chat. They cannot spend. "
+                "The Windows executor is the only signer."
+            )
+        elif cmd == "HALT":
+            set_halted(True)
+            telegram_notifier.send("RH HALT — no new buys. Open positions still managed.")
+        elif cmd == "RESUME":
+            set_halted(False)
+            telegram_notifier.send("RH RESUME — 5-min micro cycle is live.")
+        elif cmd == "STATUS":
+            telegram_notifier.send(build_report())
+        elif cmd == "SCAN":
+            with httpx.Client() as client:
+                cands = scan_dexscreener(client)[:8]
+            if not cands:
+                telegram_notifier.send("RH SCAN: no candidates this pass.")
+                continue
+            lines = ["<b>RH SCAN</b>"]
+            for c in cands:
+                age = c.get("age_min")
+                age_s = f"{age:.0f}m" if age is not None else "?"
+                lines.append(
+                    f"{c.get('symbol')} [{c.get('source')}] liq ${c.get('liquidity', 0):,.0f} "
+                    f"age {age_s}"
+                )
+            telegram_notifier.send("\n".join(lines))
 
 
 def test_telegram() -> int:
@@ -798,6 +888,7 @@ def main() -> None:
     p.add_argument("--scan", action="store_true")
     p.add_argument("--test-plumbing", action="store_true")
     p.add_argument("--test-telegram", action="store_true")
+    p.add_argument("--inbox", action="store_true", help="poll Telegram commands only")
     args = p.parse_args()
     if args.status:
         status()
@@ -810,6 +901,9 @@ def main() -> None:
         return
     if args.test_telegram:
         raise SystemExit(test_telegram())
+    if args.inbox:
+        handle_telegram_commands()
+        return
     cycle()
 
 

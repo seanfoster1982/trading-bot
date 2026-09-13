@@ -137,23 +137,28 @@ LIVE_MAX_HOLD_HOURS = 48
 LIVE_FEE_BUFFER_SOL = 0.01          # keep for tx fees / rent
 
 # --- Robinhood Chain live (rh_live_trader.py) — REAL ETH ---
-# User-funded wallet 0x4D77…D91c (~$94 ETH). Plumbing (quote+sign, no send)
-# succeeded 2026-09-12. Cycle still requires this flag; do not run the
-# executor from an untrusted host. All $50 of the pilot budget can be lost.
+# One Windows executor, 10 micro slots. Grok/ChatGPT do not hold this key.
 RH_LIVE_ENABLED = True
 RH_EXPECTED_ADDRESS = "0x4D772dB54461eAc90538d6c1E336841f4ACbD91c"
-RH_BUDGET_USD = 50.0
-RH_TRADE_USD = 5.0
-RH_MAX_OPEN = 1
-RH_MAX_REALIZED_LOSS_USD = 10.0
-RH_MIN_HOURS_BETWEEN_BUYS = 6
-RH_SLIPPAGE_BPS = 100               # 1% 0x slippage
-RH_STOP_PCT = 25.0
-RH_MAX_HOLD_HOURS = 24
-RH_FEE_BUFFER_ETH = 0.001           # keep for gas
-RH_MIN_LIQUIDITY = 100_000.0        # Dexscreener USD liquidity
-RH_MIN_VOLUME_1H = 10_000.0         # skip idle pools even if TVL looks large
-RH_MAX_ROUNDTRIP_COST_PCT = 3.0     # reject if 0x buy+sell haircut exceeds this
+RH_BUDGET_USD = 80.0
+RH_TRADE_USD = 3.0
+RH_MAX_OPEN = 10
+RH_MAX_NEW_PER_CYCLE = 2
+RH_WORKERS = 10
+RH_MAX_REALIZED_LOSS_USD = 20.0
+RH_MIN_MINUTES_BETWEEN_BUYS = 5
+RH_MIN_HOURS_BETWEEN_BUYS = RH_MIN_MINUTES_BETWEEN_BUYS / 60.0
+RH_SLIPPAGE_BPS = 150
+RH_STOP_PCT = 20.0
+RH_MAX_HOLD_MINUTES = 60
+RH_MAX_HOLD_HOURS = RH_MAX_HOLD_MINUTES / 60.0
+RH_FEE_BUFFER_ETH = 0.002
+RH_MIN_LIQUIDITY = 15_000.0
+RH_MIN_VOLUME_1H = 2_000.0
+RH_FRESH_MAX_AGE_MIN = 120.0
+RH_FRESH_MIN_LIQUIDITY = 2_000.0
+RH_FRESH_MIN_VOLUME_1H = 400.0
+RH_MAX_ROUNDTRIP_COST_PCT = 8.0
 
 # Strategy B: breakouts — established-enough tokens accelerating right now.
 # The +25%..+300% band deliberately excludes launch-pump garbage (+60,000%).

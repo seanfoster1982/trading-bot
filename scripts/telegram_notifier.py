@@ -207,5 +207,87 @@ def _test() -> None:
     raise SystemExit(0 if setup(send_test=True) else 1)
 
 
+_OFFSET_PATH = Path(__file__).resolve().parent.parent / "data" / "cache" / "tg_offset.txt"
+
+
+def parse_command(text: str) -> str | None:
+    t = (text or "").strip()
+    if not t:
+        return None
+    if t.startswith("/"):
+        t = t[1:]
+    t = t.split("@", 1)[0].strip().upper()
+    aliases = {
+        "STATUS": "STATUS",
+        "HALT": "HALT",
+        "STOP": "HALT",
+        "RESUME": "RESUME",
+        "HELP": "HELP",
+        "SCAN": "SCAN",
+    }
+    return aliases.get(t)
+
+
+def is_operator(from_id, chat_id) -> bool:
+    _, dest = _creds()
+    op = _clean(os.getenv("TELEGRAM_OPERATOR_ID") or "")
+    if op:
+        return str(from_id) == op
+    return str(chat_id) == dest
+
+
+def _read_offset() -> int:
+    try:
+        return int(_OFFSET_PATH.read_text(encoding="utf-8").strip() or "0")
+    except Exception:
+        return 0
+
+
+def _write_offset(value: int) -> None:
+    _OFFSET_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _OFFSET_PATH.write_text(str(int(value)), encoding="utf-8")
+
+
+def poll_commands() -> list[dict]:
+    """Return operator commands from new Telegram messages. Never logs secrets."""
+    token, dest = _creds()
+    if not token or not dest:
+        return []
+    offset = _read_offset()
+    try:
+        r = httpx.get(
+            f"https://api.telegram.org/bot{token}/getUpdates",
+            params={"offset": offset + 1, "timeout": 0},
+            timeout=12.0,
+        )
+    except Exception as e:
+        print(f"[telegram] getUpdates failed: {type(e).__name__}", file=sys.stderr)
+        return []
+    if r.status_code != 200:
+        return []
+    try:
+        data = r.json()
+    except json.JSONDecodeError:
+        return []
+    out: list[dict] = []
+    last_id = offset
+    for upd in data.get("result") or []:
+        uid = int(upd.get("update_id") or 0)
+        last_id = max(last_id, uid)
+        msg = upd.get("message") or {}
+        text = msg.get("text") or ""
+        cmd = parse_command(text)
+        chat = (msg.get("chat") or {}).get("id")
+        from_id = (msg.get("from") or {}).get("id")
+        if not cmd:
+            continue
+        if not is_operator(from_id, chat):
+            continue
+        out.append({"cmd": cmd, "from_id": from_id, "chat_id": chat})
+    if last_id > offset:
+        _write_offset(last_id)
+    return out
+
+
 if __name__ == "__main__":
     raise SystemExit(0 if setup(send_test=True) else 1)

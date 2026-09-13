@@ -143,3 +143,27 @@ def test_assemble_legacy_tx_chain_id():
     assert tx["chainId"] == 4663
     assert tx["value"] == 1
     assert tx["data"] == bytes.fromhex("abcd")
+
+
+def test_classify_fresh_listing():
+    assert rh.classify_listing(
+        age_min=15, liquidity=3000, volume_1h=500,
+        fresh_max_age_min=120, fresh_min_liq=2000, fresh_min_vol=400,
+        min_liq=15000, min_vol=2000,
+    ) == "fresh"
+
+
+def test_classify_fresh_too_thin():
+    assert rh.classify_listing(
+        age_min=15, liquidity=100, volume_1h=10,
+        fresh_max_age_min=120, fresh_min_liq=2000, fresh_min_vol=400,
+        min_liq=15000, min_vol=2000,
+    ) is None
+
+
+def test_classify_established():
+    assert rh.classify_listing(
+        age_min=400, liquidity=20000, volume_1h=3000,
+        fresh_max_age_min=120, fresh_min_liq=2000, fresh_min_vol=400,
+        min_liq=15000, min_vol=2000,
+    ) == "established"

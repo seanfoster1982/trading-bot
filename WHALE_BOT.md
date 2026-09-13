@@ -267,19 +267,22 @@ Do this on the PC (do **not** paste the token in chat):
 That script prints your bot's `@username`, writes `TELEGRAM_CHAT_ID`, and
 sends a test ping. Same check: `python scripts/rh_live_trader.py --test-telegram`.
 
-Pilot caps (all of the $50 can still be lost):
+Pilot caps (this money can still be lost):
 
 | Setting | Default |
 |---|---|
 | `RH_LIVE_ENABLED` | `True` |
-| `RH_BUDGET_USD` | $50 lifetime |
-| `RH_TRADE_USD` | $5 |
-| `RH_MAX_OPEN` | 1 |
-| `RH_MAX_REALIZED_LOSS_USD` | $10 halt |
-| `RH_SLIPPAGE_BPS` | 100 (1%) |
-| `RH_MAX_ROUNDTRIP_COST_PCT` | 3% 0x buy+sell haircut |
-| `RH_MIN_LIQUIDITY` | $100,000 Dexscreener |
-| `RH_MIN_VOLUME_1H` | $10,000 |
+| `RH_BUDGET_USD` | $80 lifetime |
+| `RH_TRADE_USD` | $3 micro |
+| `RH_MAX_OPEN` | 10 slots |
+| `RH_MIN_MINUTES_BETWEEN_BUYS` | 5 |
+| `RH_MAX_HOLD_MINUTES` | 60 |
+| `RH_FRESH_MAX_AGE_MIN` | 120 (new RH listings) |
+| `RH_MAX_REALIZED_LOSS_USD` | $20 halt |
+
+Telegram (Sean only, in @RealChainTradingBot): `STATUS` `SCAN` `HALT` `RESUME` `HELP`.
+Grok/ChatGPT may talk in the same chat; they cannot sign. The Windows task is
+the only signer. Inbox task polls commands every 1 minute.
 
 Entries skip ticker-squat USDG, tokenized-equity symbols, and native/WETH.
 Optional allow-list: `data/rh_watchlist.json`. US stock tokens are out of

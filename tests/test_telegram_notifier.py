@@ -146,3 +146,19 @@ def test_setup_without_token_does_not_call_api(monkeypatch):
     monkeypatch.setattr(tg.httpx, "get", boom)
     monkeypatch.setattr(tg.httpx, "post", boom)
     assert tg.setup(send_test=True) is False
+
+
+def test_parse_command_aliases():
+    assert tg.parse_command("/status@RealChainTradingBot") == "STATUS"
+    assert tg.parse_command("halt") == "HALT"
+    assert tg.parse_command("STOP") == "HALT"
+    assert tg.parse_command("hello") is None
+
+
+def test_is_operator_uses_operator_id(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "-100")
+    monkeypatch.setenv("TELEGRAM_OPERATOR_ID", "42")
+    monkeypatch.setattr(tg, "load_dotenv", lambda **kwargs: None)
+    assert tg.is_operator(42, -100) is True
+    assert tg.is_operator(99, -100) is False
