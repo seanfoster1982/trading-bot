@@ -213,7 +213,7 @@ async def connect_test() -> int:
     guild_id = int(cfg["guild_id"])
     
     intents = discord.Intents.default()
-    intents.message_content = True
+    intents.message_content = False  # slash commands only; avoid privileged intent
     client = discord.Client(intents=intents)
     result = {"success": False}
     
@@ -314,7 +314,7 @@ class DiscordGateway:
         self.operator_id = int(self.cfg["operator_id"]) if self.cfg["operator_id"].isdigit() else 0
         
         intents = discord.Intents.default()
-        intents.message_content = True
+        intents.message_content = False  # slash commands only; avoid privileged intent
         
         self.client = discord.Client(intents=intents)
         self.tree = app_commands.CommandTree(self.client)
@@ -413,11 +413,22 @@ class DiscordGateway:
         async def cmd_scan(interaction: discord.Interaction):
             await self._cmd_scan(interaction)
         
-        for alias in ["halt", "stop", "pause", "emergency_stop"]:
-            @self.tree.command(name=alias, description="HALT new buys (existing positions still managed)", guild=guild)
-            async def cmd_halt(interaction: discord.Interaction, _alias=alias):
-                await self._cmd_halt(interaction)
-        
+        @self.tree.command(name="halt", description="HALT new buys (existing positions still managed)", guild=guild)
+        async def cmd_halt(interaction: discord.Interaction):
+            await self._cmd_halt(interaction)
+
+        @self.tree.command(name="stop", description="HALT new buys (existing positions still managed)", guild=guild)
+        async def cmd_stop(interaction: discord.Interaction):
+            await self._cmd_halt(interaction)
+
+        @self.tree.command(name="pause", description="HALT new buys (existing positions still managed)", guild=guild)
+        async def cmd_pause(interaction: discord.Interaction):
+            await self._cmd_halt(interaction)
+
+        @self.tree.command(name="emergency_stop", description="HALT new buys (existing positions still managed)", guild=guild)
+        async def cmd_emergency_stop(interaction: discord.Interaction):
+            await self._cmd_halt(interaction)
+
         @self.tree.command(name="resume", description="Resume new buys", guild=guild)
         async def cmd_resume(interaction: discord.Interaction):
             await self._cmd_resume(interaction)
@@ -457,6 +468,10 @@ class DiscordGateway:
     
     async def _cmd_status(self, interaction):
         """Show system status."""
+        if not self._is_authorized(interaction):
+            await self._unauthorized_response(interaction)
+            return
+
         import discord
         import stop_control
         from whale_config import (
@@ -514,6 +529,10 @@ class DiscordGateway:
     
     async def _cmd_positions(self, interaction):
         """Show open positions."""
+        if not self._is_authorized(interaction):
+            await self._unauthorized_response(interaction)
+            return
+
         import discord
         
         trading_db = ROOT / "data" / "memecoins.db"
@@ -550,6 +569,10 @@ class DiscordGateway:
     
     async def _cmd_pnl(self, interaction):
         """Show P&L summary."""
+        if not self._is_authorized(interaction):
+            await self._unauthorized_response(interaction)
+            return
+
         import discord
         
         trading_db = ROOT / "data" / "memecoins.db"
@@ -593,6 +616,10 @@ class DiscordGateway:
     
     async def _cmd_risk(self, interaction):
         """Show risk limits."""
+        if not self._is_authorized(interaction):
+            await self._unauthorized_response(interaction)
+            return
+
         import discord
         from whale_config import (
             RH_TRADE_USD, RH_BUDGET_USD, RH_MAX_OPEN, RH_MAX_REALIZED_LOSS_USD,
@@ -613,6 +640,10 @@ class DiscordGateway:
     
     async def _cmd_signals(self, interaction):
         """Show recent decision signals."""
+        if not self._is_authorized(interaction):
+            await self._unauthorized_response(interaction)
+            return
+
         import discord
         
         trading_db = ROOT / "data" / "memecoins.db"
@@ -650,6 +681,10 @@ class DiscordGateway:
     
     async def _cmd_sources(self, interaction):
         """Show integration/source status."""
+        if not self._is_authorized(interaction):
+            await self._unauthorized_response(interaction)
+            return
+
         import discord
         
         sources = []
@@ -689,6 +724,10 @@ class DiscordGateway:
     
     async def _cmd_scan(self, interaction):
         """READ-ONLY discovery display. MUST NOT call cycle() or execution path."""
+        if not self._is_authorized(interaction):
+            await self._unauthorized_response(interaction)
+            return
+
         import discord
         import httpx
         from whale_config import RH_MIN_LIQUIDITY, RH_MIN_VOLUME_1H
