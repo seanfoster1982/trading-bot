@@ -22,7 +22,7 @@ from solders.keypair import Keypair
 # The bot wallet we expect SOLANA_PRIVATE_KEY in .env to decode to.
 # This is the wallet you created in Phantom on May 12.
 # If the derived address differs from this, something is wrong - abort.
-EXPECTED_PUBLIC_ADDRESS = '9SDJkC88PgcaAeqLsbE77nnGUne4ZYZqjDHQbGisfGn3'
+EXPECTED_PUBLIC_ADDRESS = 'EL78Esa1m6fCZqrUUSjKjtZ14QFp4jdycqiKv7kpehbW'
 
 
 def load_keypair() -> Keypair:

@@ -151,10 +151,10 @@ clean on 2026-05-21 (backup saved as data/memecoins_backup_*.db).
 ## 8. Environment / keys (.env — never commit, never print)
 
 - BIRDEYE_API_KEY (Birdeye Starter $99/mo)
-- SOLANA_PRIVATE_KEY (base58) for wallet 9SDJkC88PgcaAeqLsbE77nnGUne4ZYZqjDHQbGisfGn3
+- SOLANA_PRIVATE_KEY (base58) for wallet EL78Esa1m6fCZqrUUSjKjtZ14QFp4jdycqiKv7kpehbW
 - HELIUS_API_KEY (free tier, RPC — public RPC silently returns bad data, do not use it)
 - TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID (bot @RealChainTradingBot)
-- EXPECTED_PUBLIC_ADDRESS in wallet_loader.py = 9SDJkC88... (the FUNDED bot wallet)
+- EXPECTED_PUBLIC_ADDRESS in wallet_loader.py = EL78Esa1... (the FUNDED bot wallet)
 
 Wallet has ~0.99 SOL, ~$92 USDC, plus 239 dust token accounts from prior manual
 trading (not bot trades). Max bot exposure intended ~$100-185.
