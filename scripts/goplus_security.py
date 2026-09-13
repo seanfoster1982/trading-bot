@@ -13,7 +13,7 @@ Authentication (official Access Token API):
 Token Security:
   GET https://api.gopluslabs.io/api/v1/token_security/{chain_id}
       ?contract_addresses={address}
-  Authorization: Bearer <access_token>
+  Authorization: <access_token> (raw token; "Bearer " prefix currently yields code 4012)
   Robinhood Chain candidates MUST use chain_id 4663
   (GoPlus chain table: id 4663 = Robinhood).
 
@@ -761,7 +761,9 @@ class GoPlusChecker:
         now: float,
     ) -> GoPlusSecurityResult:
         url = GOPLUS_BASE + TOKEN_SECURITY_PATH.format(chain_id=int(chain_id))
-        headers = {"Authorization": f"Bearer {access_token}"}
+        # GoPlus currently accepts the raw access_token in Authorization.
+        # Prefixed "Bearer " returns API code 4012 against valid Free credentials.
+        headers = {"Authorization": access_token}
         try:
             resp = client.get(
                 url,
@@ -930,13 +932,27 @@ def smoke_test(address: str | None = None) -> int:
     dumped = json.dumps(public, indent=2, sort_keys=True)
     secrets = [cfg.app_secret, checker._access_token or ""]
     print(redact_text(dumped, secrets))
-    if result.status in (STATUS_UNAVAILABLE, STATUS_DISABLED):
+    # Connectivity criteria: auth + HTTP/API + successful normalize.
+    # Do not require PASS/WARN/BLOCK — wrapped natives (e.g. RH WETH) may omit
+    # is_honeypot and correctly normalize to goplus_partial / UNAVAILABLE.
+    if result.status == STATUS_DISABLED:
         print(f"GoPlus smoke-test FAIL: status={result.status} error={result.error_code}")
         return 1
-    print(
-        f"GoPlus smoke-test OK: status={result.status} hard_block={str(result.hard_block).lower()}"
+    auth_api_ok = result.raw_status_code == 200 and result.error_code in (
+        "",
+        "goplus_partial",
     )
-    return 0
+    if result.status in (STATUS_PASS, STATUS_WARN, STATUS_BLOCK) or (
+        result.status == STATUS_UNAVAILABLE and auth_api_ok and bool(result.payload)
+    ):
+        print(
+            f"GoPlus smoke-test OK: status={result.status} "
+            f"error={result.error_code or 'none'} "
+            f"hard_block={str(result.hard_block).lower()}"
+        )
+        return 0
+    print(f"GoPlus smoke-test FAIL: status={result.status} error={result.error_code}")
+    return 1
 
 
 def main() -> None:

@@ -92,7 +92,7 @@ def _security_ok_handler(address=TOKEN_A, payload=None):
             params = json_body  # FakeClient passes params in this slot
             addr = (params or {}).get("contract_addresses")
             assert addr == rh.checksum(address).lower()
-            assert headers["Authorization"] == f"Bearer {ACCESS}"
+            assert headers["Authorization"] == ACCESS  # GoPlus: raw token, not Bearer
             return FakeResp(
                 200, {"code": 1, "result": {addr: payload}}
             )
@@ -670,3 +670,113 @@ def test_smoke_cli_help_is_non_trading():
 def test_smoke_test_missing_creds_nonzero(isolated_env, monkeypatch):
     monkeypatch.setattr(gp, "read_config", lambda: gp.GoPlusConfig(False, "", ""))
     assert gp.smoke_test() != 0
+
+
+def test_authorization_header_is_raw_access_token(monkeypatch):
+    """GoPlus rejects Authorization: Bearer <token> with code 4012; send raw token."""
+    import goplus_security as gp
+
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+
+        def json(self):
+            return {
+                "code": 1,
+                "message": "ok",
+                "result": {
+                    "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+                        "is_honeypot": "0",
+                        "is_open_source": "1",
+                        "is_proxy": "0",
+                        "is_mintable": "0",
+                        "owner_change_balance": "0",
+                        "can_take_back_ownership": "0",
+                        "hidden_owner": "0",
+                        "selfdestruct": "0",
+                        "external_call": "0",
+                        "buy_tax": "0",
+                        "sell_tax": "0",
+                        "cannot_buy": "0",
+                        "cannot_sell_all": "0",
+                        "slippage_modifiable": "0",
+                        "is_blacklisted": "0",
+                        "is_whitelisted": "0",
+                        "is_anti_whale": "0",
+                        "anti_whale_modifiable": "0",
+                        "trading_cooldown": "0",
+                        "personal_slippage_modifiable": "0",
+                    }
+                },
+            }
+
+    class FakeClient:
+        def get(self, url, params=None, headers=None, timeout=None):
+            captured["headers"] = dict(headers or {})
+            captured["url"] = url
+            return FakeResp()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    checker = gp.GoPlusChecker(
+        config=gp.GoPlusConfig(enabled=True, app_key="k", app_secret="s")
+    )
+    checker._access_token = "test-access-token-value"
+    checker._access_expires_at = 10**12
+    monkeypatch.setattr(gp.httpx, "Client", lambda *a, **k: FakeClient())
+    # Direct fetch path
+    result = checker._fetch_token_security(
+        FakeClient(),
+        "test-access-token-value",
+        1,
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        0.0,
+    )
+    assert captured["headers"].get("Authorization") == "test-access-token-value"
+    assert not str(captured["headers"].get("Authorization", "")).startswith("Bearer ")
+    assert result.status in (gp.STATUS_PASS, gp.STATUS_WARN, gp.STATUS_BLOCK)
+
+
+def test_smoke_ok_on_partial_normalized_weth(monkeypatch, capsys):
+    """Smoke passes when auth/API/normalize work even if is_honeypot is absent."""
+    import goplus_security as gp
+
+    partial = gp._result(
+        chain_id=4663,
+        contract_address=gp.SMOKE_WETH,
+        now=0.0,
+        status=gp.STATUS_UNAVAILABLE,
+        raw_status_code=200,
+        error_code="goplus_partial",
+        reason_codes=["goplus_partial"],
+        warnings=["is_proxy"],
+        payload={"token_symbol": "WETH", "is_proxy": "1"},
+    )
+
+    class FakeChecker:
+        def __init__(self, *a, **k):
+            pass
+
+        def check_token_security(self, chain_id, address):
+            return partial
+
+        @property
+        def _access_token(self):
+            return None
+
+    monkeypatch.setattr(gp, "GoPlusChecker", FakeChecker)
+    monkeypatch.setattr(
+        gp,
+        "read_config",
+        lambda: gp.GoPlusConfig(enabled=False, app_key="k", app_secret="s"),
+    )
+    rc = gp.smoke_test(gp.SMOKE_WETH)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "smoke-test OK" in out
+
