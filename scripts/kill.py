@@ -1,12 +1,13 @@
 """
-Kill switch.
+Kill / stop switch.
 
-Run this any time you need to stop trading immediately and flatten
-positions. It connects directly to each exchange and calls cancel_all,
-independent of whether the main engine is running.
+Polymarket: cancel open orders (no flatten beyond cancel_all).
+Solana: no-op (atomic swaps).
+Robinhood Chain: durable NEW-BUY halt via stop_control (no liquidation).
 
 Usage:
     python scripts/kill.py
+    python scripts/kill.py --platform robinhood
     python scripts/kill.py --platform polymarket
 """
 from __future__ import annotations
@@ -19,16 +20,18 @@ import click
 import structlog
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from config import get_settings
 from exchanges.polymarket import PolymarketExchange
 from exchanges.solana import SolanaExchange
+import stop_control
 
 
 @click.command()
 @click.option(
     "--platform",
-    type=click.Choice(["all", "polymarket", "solana"]),
+    type=click.Choice(["all", "polymarket", "solana", "robinhood"]),
     default="all",
 )
 def main(platform: str):
@@ -40,6 +43,20 @@ def main(platform: str):
 
 async def _run(settings, platform: str, log) -> None:
     cancelled_total = 0
+
+    if platform in ("all", "robinhood"):
+        try:
+            out = stop_control.request_halt(requested_by="kill.py", reason="KILL_SWITCH")
+            log.warning(
+                "kill.rh_halt",
+                phase=out.phase,
+                generation=out.generation,
+                message=out.message,
+            )
+            if out.phase != "HALT_ACTIVE":
+                log.error("kill.rh_halt_failed", message=out.message)
+        except Exception:
+            log.exception("kill.rh_halt_failed")
 
     if platform in ("all", "polymarket"):
         try:
@@ -60,11 +77,17 @@ async def _run(settings, platform: str, log) -> None:
             log.exception("kill.polymarket_failed")
 
     if platform in ("all", "solana"):
-        # Solana swaps are atomic; nothing to cancel. Just log.
-        log.warning("kill.solana_no_op",
-                    reason="Solana swaps are atomic and cannot be cancelled")
+        log.warning(
+            "kill.solana_no_op",
+            reason="Solana swaps are atomic and cannot be cancelled",
+        )
 
-    log.warning("kill.complete", total_cancelled=cancelled_total)
+    log.warning(
+        "kill.complete",
+        total_cancelled=cancelled_total,
+        rh_liquidation=False,
+        note="RH halt is no-new-buy only",
+    )
 
 
 if __name__ == "__main__":

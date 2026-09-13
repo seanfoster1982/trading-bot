@@ -48,6 +48,7 @@ import telegram_notifier  # noqa: E402
 import risk_engine as re  # noqa: E402
 import decision_record as dr  # noqa: E402
 import goplus_security as goplus  # noqa: E402
+import stop_control  # noqa: E402
 from whale_config import (  # noqa: E402
     RH_BUDGET_USD,
     RH_EXPECTED_ADDRESS,
@@ -80,15 +81,24 @@ HALT_FLAG = ROOT / "data" / "cache" / "rh_manual_halt"
 
 
 def is_halted() -> bool:
-    return HALT_FLAG.exists()
+    """NEW-BUY halt via durable stop_control (legacy file mirrored)."""
+    try:
+        stop_control.ensure_initialized()
+        return stop_control.is_new_buy_halted()
+    except Exception:
+        return True  # fail closed for new buys
 
 
 def set_halted(on: bool) -> None:
-    HALT_FLAG.parent.mkdir(parents=True, exist_ok=True)
+    """Operator halt/resume through stop_control (no liquidation)."""
     if on:
-        HALT_FLAG.write_text("1", encoding="utf-8")
-    elif HALT_FLAG.exists():
-        HALT_FLAG.unlink()
+        out = stop_control.request_halt(requested_by="rh_live_trader", reason="set_halted")
+        if out.phase != "HALT_ACTIVE":
+            print(f"  halt degraded: {out.message}")
+    else:
+        out = stop_control.request_resume(requested_by="rh_live_trader", reason="set_halted")
+        if out.phase != "RESUME_ACTIVE":
+            print(f"  resume degraded: {out.message}")
 
 
 def _notify(text: str, *, cooldown_key: str | None = None, cooldown_s: int = 0) -> None:
@@ -439,8 +449,20 @@ def zerox_quote(client: httpx.Client, sell: str, buy: str, sell_amount: int,
     return r.json()
 
 
+def _rpc_ambiguous(exc: BaseException) -> bool:
+    name = type(exc).__name__.lower()
+    msg = str(exc).lower()
+    return (
+        "timeout" in name
+        or "timeout" in msg
+        or "timed out" in msg
+        or "connection" in name
+        or "connection" in msg
+    )
+
+
 def sign_and_maybe_send(client: httpx.Client, account, tx_dict: dict,
-                         send: bool) -> str | None:
+                         send: bool, *, raise_on_ambiguous: bool = False) -> str | None:
     signed = account.sign_transaction(tx_dict)
     raw = signed.raw_transaction
     txh = to_hex(signed.hash)
@@ -452,6 +474,8 @@ def sign_and_maybe_send(client: httpx.Client, account, tx_dict: dict,
     except Exception as e:
         # Fee spikes / RPC rejects must not abort the whole scheduled cycle.
         print(f"  broadcast failed: {e}")
+        if raise_on_ambiguous and _rpc_ambiguous(e):
+            raise
         return None
     print(f"  broadcast {result}")
     return result
@@ -466,7 +490,8 @@ def wait_receipt(client: httpx.Client, txh: str, tries: int = 20) -> dict | None
     return None
 
 
-def send_quote_tx(client: httpx.Client, account, quote: dict, send: bool) -> str | None:
+def send_quote_tx(client: httpx.Client, account, quote: dict, send: bool,
+                  *, raise_on_ambiguous: bool = False) -> str | None:
     tx = quote["transaction"]
     nonce = rh.to_int(rpc_call(
         client, "eth_getTransactionCount", [account.address, "pending"]))
@@ -479,7 +504,9 @@ def send_quote_tx(client: httpx.Client, account, quote: dict, send: bool) -> str
         gas_price=effective_gas_price(client, suggested),
         nonce=nonce,
     )
-    return sign_and_maybe_send(client, account, assembled, send)
+    return sign_and_maybe_send(
+        client, account, assembled, send, raise_on_ambiguous=raise_on_ambiguous
+    )
 
 
 def maybe_approve(client: httpx.Client, account, quote: dict, send: bool) -> bool:
@@ -795,40 +822,64 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
         return None
     persist_decision(conn, buy_decision)
     print(f"  BUYING {sym} ${RH_TRADE_USD:.2f} roundtrip={rt:.2f}%")
-    if not maybe_approve(client, account, quote, send=True):
-        return None
-    quote = zerox_quote(client, rh.NATIVE_ETH, token, spend_wei, account.address)
-    ok, why = rh.validate_quote(
-        quote or {}, sell_token=rh.NATIVE_ETH, buy_token=token,
-        taker=account.address, sell_amount=spend_wei)
-    if not ok:
-        print(f"  skip requote: {why}")
-        return None
-    gp2 = goplus.check_token_security(rh.RH_CHAIN_ID, token)
-    if goplus.blocks_new_buy(gp2):
-        persist_goplus_buy_block(
-            conn, token=token, sym=sym, src=src, gp=gp2, phase="pre_send"
+    # NEW BUY critical section: same cross-process gate as HALT ACTIVE.
+    with stop_control.new_buy_gate(asset=token) as attempt:
+        if attempt is None:
+            print(f"  skip {sym}: BLOCKED_BY_HALT")
+            return None
+        if not maybe_approve(client, account, quote, send=True):
+            attempt.record_result(stop_control.RES_BROADCAST_REJECTED)
+            return None
+        quote = zerox_quote(client, rh.NATIVE_ETH, token, spend_wei, account.address)
+        ok, why = rh.validate_quote(
+            quote or {}, sell_token=rh.NATIVE_ETH, buy_token=token,
+            taker=account.address, sell_amount=spend_wei)
+        if not ok:
+            print(f"  skip requote: {why}")
+            attempt.record_result(stop_control.RES_BROADCAST_REJECTED)
+            return None
+        gp2 = goplus.check_token_security(rh.RH_CHAIN_ID, token)
+        if goplus.blocks_new_buy(gp2):
+            persist_goplus_buy_block(
+                conn, token=token, sym=sym, src=src, gp=gp2, phase="pre_send"
+            )
+            attempt.record_result(stop_control.RES_BROADCAST_REJECTED)
+            return None
+        v2 = rh_buy_verdict(conn)
+        if not v2.allow:
+            persist_decision(
+                conn,
+                blocked_record(
+                    asset=token,
+                    symbol=sym,
+                    reason_codes=[v2.code],
+                    risk_code=v2.code,
+                    sources=[src],
+                    proposed_notional_usd=RH_TRADE_USD,
+                    extra={"detail": v2.detail, "phase": "pre_send"},
+                ),
+            )
+            attempt.record_result(stop_control.RES_BROADCAST_REJECTED)
+            return None
+        try:
+            txh = send_quote_tx(
+                client, account, quote, send=True, raise_on_ambiguous=True
+            )
+        except Exception as e:
+            attempt.record_result(
+                stop_control.classify_broadcast_outcome(None, error=e)
+            )
+            telegram_notifier.send(
+                f"RH BUY UNKNOWN {sym} — broadcast ambiguous; no auto-retry."
+            )
+            return None
+        attempt.record_result(
+            stop_control.classify_broadcast_outcome(txh),
+            local_tx_hash=txh,
         )
-        return None
-    v2 = rh_buy_verdict(conn)
-    if not v2.allow:
-        persist_decision(
-            conn,
-            blocked_record(
-                asset=token,
-                symbol=sym,
-                reason_codes=[v2.code],
-                risk_code=v2.code,
-                sources=[src],
-                proposed_notional_usd=RH_TRADE_USD,
-                extra={"detail": v2.detail, "phase": "pre_send"},
-            ),
-        )
-        return None
-    txh = send_quote_tx(client, account, quote, send=True)
-    if not txh:
-        telegram_notifier.send(f"RH BUY FAILED {sym} - not confirmed.")
-        return None
+        if not txh:
+            telegram_notifier.send(f"RH BUY FAILED {sym} - not confirmed.")
+            return None
     rec = wait_receipt(client, txh)
     if not rec or rh.to_int(rec.get("status")) != 1:
         telegram_notifier.send(f"RH BUY REVERTED {sym} {txh}")
@@ -1156,9 +1207,13 @@ def build_report() -> str:
 
 
 def handle_telegram_commands() -> None:
-    cmds = telegram_notifier.poll_commands()
+    # Do NOT advance Telegram offset until HALT/RESUME durable write succeeds.
+    cmds, pending_offset = telegram_notifier.poll_commands(commit_offset=False)
     if not cmds:
+        if pending_offset is not None:
+            telegram_notifier.commit_offset(pending_offset)
         return
+    halt_ok = True
     init_db()
     for item in cmds:
         cmd = item["cmd"]
@@ -1167,17 +1222,34 @@ def handle_telegram_commands() -> None:
                 "<b>RH commands</b> (Sean only)\n"
                 "STATUS — wallet, opens, P&amp;L\n"
                 "SCAN — top fresh RH listings (no buy)\n"
-                "HALT / STOP — no new buys; still manages exits\n"
+                "HALT / STOP / PAUSE / EMERGENCY_STOP — no new buys; exits still managed\n"
                 "RESUME — allow new buys\n"
                 "Grok/ChatGPT: advise in this chat. They cannot spend. "
                 "The Windows executor is the only signer."
             )
         elif cmd == "HALT":
-            set_halted(True)
-            telegram_notifier.send("RH HALT — no new buys. Open positions still managed.")
+            out = stop_control.request_halt(
+                requested_by=f"telegram:{item.get('from_id')}", reason="TELEGRAM_HALT"
+            )
+            if out.phase == "HALT_ACTIVE":
+                telegram_notifier.send(
+                    f"RH HALT ACTIVE gen={out.generation} — no new buys. "
+                    "Open positions still managed."
+                )
+            else:
+                halt_ok = False
+                telegram_notifier.send(out.message)
         elif cmd == "RESUME":
-            set_halted(False)
-            telegram_notifier.send("RH RESUME — 5-min micro cycle is live.")
+            out = stop_control.request_resume(
+                requested_by=f"telegram:{item.get('from_id')}", reason="TELEGRAM_RESUME"
+            )
+            if out.phase == "RESUME_ACTIVE":
+                telegram_notifier.send(
+                    f"RH RESUME ACTIVE gen={out.generation} — 5-min micro cycle is live."
+                )
+            else:
+                halt_ok = False
+                telegram_notifier.send(out.message)
         elif cmd == "STATUS":
             telegram_notifier.send(build_report())
         elif cmd == "SCAN":
@@ -1200,6 +1272,13 @@ def handle_telegram_commands() -> None:
                 telegram_notifier.send("\n".join(lines_out))
             finally:
                 conn.close()
+
+
+    # Advance offset only when halt/resume durable path did not fail.
+    if pending_offset is not None and halt_ok:
+        telegram_notifier.commit_offset(pending_offset)
+    elif pending_offset is not None and not halt_ok:
+        print("telegram offset NOT advanced — halt/resume degraded; will retry")
 
 
 def test_telegram() -> int:

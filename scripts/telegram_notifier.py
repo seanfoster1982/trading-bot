@@ -221,6 +221,8 @@ def parse_command(text: str) -> str | None:
         "STATUS": "STATUS",
         "HALT": "HALT",
         "STOP": "HALT",
+        "PAUSE": "HALT",
+        "EMERGENCY_STOP": "HALT",
         "RESUME": "RESUME",
         "HELP": "HELP",
         "SCAN": "SCAN",
@@ -248,11 +250,20 @@ def _write_offset(value: int) -> None:
     _OFFSET_PATH.write_text(str(int(value)), encoding="utf-8")
 
 
-def poll_commands() -> list[dict]:
-    """Return operator commands from new Telegram messages. Never logs secrets."""
+def commit_offset(value: int) -> None:
+    """Persist Telegram update offset after durable control actions succeed."""
+    _write_offset(value)
+
+
+def poll_commands(*, commit_offset: bool = True) -> tuple[list[dict], int | None]:
+    """Return operator commands from new Telegram messages. Never logs secrets.
+
+    When commit_offset is False, caller must call commit_offset(pending) after
+    durable HALT/RESUME succeeds so a failed halt is retried.
+    """
     token, dest = _creds()
     if not token or not dest:
-        return []
+        return [], None
     offset = _read_offset()
     try:
         r = httpx.get(
@@ -262,13 +273,13 @@ def poll_commands() -> list[dict]:
         )
     except Exception as e:
         print(f"[telegram] getUpdates failed: {type(e).__name__}", file=sys.stderr)
-        return []
+        return [], None
     if r.status_code != 200:
-        return []
+        return [], None
     try:
         data = r.json()
     except json.JSONDecodeError:
-        return []
+        return [], None
     out: list[dict] = []
     last_id = offset
     for upd in data.get("result") or []:
@@ -283,10 +294,16 @@ def poll_commands() -> list[dict]:
             continue
         if not is_operator(from_id, chat):
             continue
-        out.append({"cmd": cmd, "from_id": from_id, "chat_id": chat})
-    if last_id > offset:
-        _write_offset(last_id)
-    return out
+        out.append({
+            "cmd": cmd,
+            "from_id": from_id,
+            "chat_id": chat,
+            "update_id": uid,
+        })
+    pending = last_id if last_id > offset else None
+    if commit_offset and pending is not None:
+        _write_offset(pending)
+    return out, pending
 
 
 if __name__ == "__main__":
