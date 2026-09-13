@@ -99,10 +99,18 @@ def main() -> int:
     x_en = (os.getenv("X_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
     rows.append(("X", "Pay/use", x_cfg, x_conn, "YES" if x_en else "NO"))
 
-    d_cfg = _yn(_present("DISCORD_BOT_TOKEN"))
-    d_conn = _run_smoke(["scripts/bootstrap_discord.py", "--check"])
+    d_cfg = _yn(
+        _present("DISCORD_BOT_TOKEN") and 
+        _present("DISCORD_APPLICATION_ID") and 
+        _present("DISCORD_GUILD_ID") and 
+        _present("DISCORD_OPERATOR_ID")
+    )
     d_en = (os.getenv("DISCORD_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
-    rows.append(("Discord", "Free", d_cfg, d_conn if d_cfg == "YES" else "WAITING", "YES" if d_en else "NO"))
+    if d_cfg == "YES":
+        d_conn = _run_smoke(["scripts/discord_gateway.py", "--check"])
+    else:
+        d_conn = "WAITING"
+    rows.append(("Discord", "Free", d_cfg, d_conn, "YES" if d_en else "NO"))
 
     rows.append(("Helius", "Existing", _yn(_present("HELIUS_API_KEY")), "n/a", "existing"))
     rows.append(("0x", "Existing", _yn(_present("ZERO_EX_API_KEY")), "n/a", "existing"))

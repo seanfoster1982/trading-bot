@@ -31,3 +31,6 @@ data/snapshots/
 
 # Durable RH stop-control state (never commit)
 data/control/
+
+# Discord gateway state (publisher checkpoints)
+data/discord/
