@@ -47,6 +47,7 @@ import rh_chain as rh  # noqa: E402
 import telegram_notifier  # noqa: E402
 import risk_engine as re  # noqa: E402
 import decision_record as dr  # noqa: E402
+import goplus_security as goplus  # noqa: E402
 from whale_config import (  # noqa: E402
     RH_BUDGET_USD,
     RH_EXPECTED_ADDRESS,
@@ -196,6 +197,63 @@ def blocked_record(**kwargs):
     kwargs.setdefault("risk_status", "VETO")
     kwargs.setdefault("chain_id", rh.RH_CHAIN_ID)
     return dr.make_decision(**kwargs)
+
+
+def _goplus_buy_bits(gp: "goplus.GoPlusSecurityResult", src: str) -> dict:
+    """DecisionRecord fields from a GoPlus check. DexScreener stays market-only."""
+    if gp.status == goplus.STATUS_DISABLED:
+        return {
+            "sources": [src],
+            "source_freshness": {},
+            "extra": {"goplus_status": "DISABLED"},
+            "security_status": "PASS",
+            "reason_codes": [],
+        }
+    return {
+        "sources": [src, "goplus"],
+        "source_freshness": {"goplus": dict(gp.data_freshness)},
+        "extra": {"goplus": gp.to_extra()},
+        "security_status": gp.decision_security_status(),
+        "reason_codes": list(gp.reason_codes),
+    }
+
+
+def persist_goplus_buy_block(
+    conn: sqlite3.Connection,
+    *,
+    token: str,
+    sym: str,
+    src: str,
+    gp: "goplus.GoPlusSecurityResult",
+    phase: str = "pre_buy",
+) -> None:
+    bits = _goplus_buy_bits(gp, src)
+    v = rh_buy_verdict(
+        conn,
+        security_blocked=True,
+        security_reason=gp.error_code
+        or (gp.reason_codes[0] if gp.reason_codes else "security_block"),
+    )
+    codes = [v.code] if v.code else []
+    codes.extend(bits["reason_codes"])
+    primary = gp.error_code or (gp.reason_codes[0] if gp.reason_codes else v.code)
+    extra = dict(bits["extra"])
+    extra["detail"] = v.detail
+    extra["phase"] = phase
+    persist_decision(
+        conn,
+        blocked_record(
+            asset=token,
+            symbol=sym,
+            reason_codes=list(dict.fromkeys(codes)),
+            risk_code=primary,
+            security_status=bits["security_status"],
+            sources=bits["sources"],
+            source_freshness=bits["source_freshness"],
+            proposed_notional_usd=RH_TRADE_USD,
+            extra=extra,
+        ),
+    )
 
 
 def init_db() -> None:
@@ -710,6 +768,14 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
             ),
         )
         return None
+    gp = goplus.check_token_security(rh.RH_CHAIN_ID, token)
+    if goplus.blocks_new_buy(gp):
+        print(f"  skip {sym}: goplus {gp.error_code or gp.status}")
+        persist_goplus_buy_block(conn, token=token, sym=sym, src=src, gp=gp)
+        return None
+    bits = _goplus_buy_bits(gp, src)
+    buy_reasons = ["risk_allow", "quote_ok", *bits["reason_codes"]]
+    buy_extra = {"roundtrip_pct": rt, **bits["extra"]}
     buy_decision = dr.make_decision(
         decision=dr.Decision.BUY,
         asset=token,
@@ -717,11 +783,12 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
         chain_id=rh.RH_CHAIN_ID,
         risk_status="ALLOW",
         risk_code=v.code or "ok",
-        security_status="PASS",
+        security_status=bits["security_status"],
         proposed_notional_usd=RH_TRADE_USD,
-        sources=[src],
-        reason_codes=["risk_allow", "quote_ok"],
-        extra={"roundtrip_pct": rt},
+        sources=bits["sources"],
+        source_freshness=bits["source_freshness"],
+        reason_codes=buy_reasons,
+        extra=buy_extra,
     )
     if not buy_decision.is_executable():
         persist_decision(conn, buy_decision)
@@ -736,6 +803,12 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
         taker=account.address, sell_amount=spend_wei)
     if not ok:
         print(f"  skip requote: {why}")
+        return None
+    gp2 = goplus.check_token_security(rh.RH_CHAIN_ID, token)
+    if goplus.blocks_new_buy(gp2):
+        persist_goplus_buy_block(
+            conn, token=token, sym=sym, src=src, gp=gp2, phase="pre_send"
+        )
         return None
     v2 = rh_buy_verdict(conn)
     if not v2.allow:
@@ -992,6 +1065,11 @@ def status() -> None:
         print("MISMATCH — refusing to trade this key.")
     print(f"ETH: {bal:.6f} (~${bal * eth_px:,.2f} @ ${eth_px:,.2f})")
     print(f"RH_LIVE_ENABLED: {RH_LIVE_ENABLED}")
+    gp_cfg = goplus.read_config()
+    print(
+        f"GoPlus: {'enabled' if gp_cfg.enabled else 'disabled'} "
+        f"({'configured' if gp_cfg.configured else 'not configured'})"
+    )
     print(f"Manual halt: {'YES' if is_halted() else 'no'}")
     print(f"Slots: {RH_MAX_OPEN} workers / ${RH_TRADE_USD:.0f} micro")
     print(f"0x API key: {'yes' if has_0x_key() else 'NO — quotes disabled'}")
