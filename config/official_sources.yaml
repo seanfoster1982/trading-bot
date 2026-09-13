@@ -1,0 +1,20 @@
+# Public reference only — no secrets.
+# Used later for airdrop/token verification. Not live trading input.
+version: 1
+projects:
+  - name: Wrapped Ether (Robinhood Chain reference)
+    chain: robinhood
+    chain_id: 4663
+    canonical_domain: null
+    official_x: null
+    official_github: null
+    contracts:
+      - label: WETH
+        address: "0x4200000000000000000000000000000000000006"
+        note: "Common RH WETH address used by local rh_chain helpers — verify on-chain before relying"
+  - name: GoPlus Security
+    chain: multi
+    canonical_domain: https://gopluslabs.io
+    official_x: null
+    official_github: https://github.com/GoPlusSecurity
+    contracts: []

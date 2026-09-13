@@ -1,0 +1,109 @@
+{
+  "version": 1,
+  "note": "Non-secret registry only. Secrets live in .env",
+  "services": {
+    "dexscreener": {
+      "plan": "Free",
+      "cost": "$0",
+      "credential_env": [],
+      "smoke": "doctor:dexscreener",
+      "live_enabled": "existing",
+      "role": "PROMOTION/market discovery — not FACT or SENTIMENT"
+    },
+    "birdeye": {
+      "plan": "Starter",
+      "cost": "$99/mo (existing)",
+      "credential_env": ["BIRDEYE_API_KEY"],
+      "smoke": "doctor:birdeye",
+      "live_enabled": "existing"
+    },
+    "goplus": {
+      "plan": "Free",
+      "cost": "$0",
+      "credential_env": ["GOPLUS_APP_KEY", "GOPLUS_APP_SECRET"],
+      "enabled_env": "GOPLUS_ENABLED",
+      "smoke": "python scripts/goplus_security.py --smoke-test",
+      "live_enabled": false,
+      "note": "Phase 2A deployed; enable only after smoke PASS + explicit auth"
+    },
+    "defillama": {
+      "plan": "Free",
+      "cost": "$0",
+      "credential_env": [],
+      "smoke": "python scripts/defillama_client.py --smoke-test",
+      "live_enabled": false
+    },
+    "etherscan": {
+      "plan": "Free",
+      "cost": "$0",
+      "credential_env": ["ETHERSCAN_API_KEY"],
+      "smoke": "python scripts/etherscan_client.py --smoke-test",
+      "live_enabled": false,
+      "note": "Do not assume Robinhood 4663 support"
+    },
+    "chainabuse": {
+      "plan": "Free limited",
+      "cost": "$0 (~10 calls/mo vendor)",
+      "credential_env": ["CHAINABUSE_API_KEY"],
+      "smoke": "python scripts/chainabuse_client.py --smoke-test --confirm-metered",
+      "live_enabled": false,
+      "monthly_cap_env": "CHAINABUSE_MONTHLY_CALL_CAP",
+      "default_cap": 8
+    },
+    "finbert": {
+      "plan": "Local",
+      "cost": "$0",
+      "credential_env": [],
+      "smoke": "python scripts/finbert_sentiment.py --smoke-test",
+      "live_enabled": false
+    },
+    "x": {
+      "plan": "Pay-per-use credits (existing)",
+      "cost": "existing credits",
+      "credential_env": ["X_BEARER_TOKEN"],
+      "enabled_env": "X_ENABLED",
+      "smoke": "python scripts/x_social.py --smoke-test",
+      "live_enabled": false
+    },
+    "discord": {
+      "plan": "Free prep",
+      "cost": "$0",
+      "credential_env": ["DISCORD_BOT_TOKEN", "DISCORD_APPLICATION_ID", "DISCORD_GUILD_ID"],
+      "enabled_env": "DISCORD_ENABLED",
+      "smoke": "python scripts/bootstrap_discord.py --check",
+      "live_enabled": false,
+      "note": "PAUSED until stop-control deployed; no HALT commands"
+    },
+    "helius": {
+      "plan": "Existing",
+      "cost": "existing",
+      "credential_env": ["HELIUS_API_KEY"],
+      "live_enabled": "existing"
+    },
+    "zerox": {
+      "plan": "Existing",
+      "cost": "existing",
+      "credential_env": ["ZERO_EX_API_KEY"],
+      "live_enabled": "existing"
+    },
+    "lunarcrush": {
+      "plan": "Individual (deferred)",
+      "cost": "$90/mo recommended later",
+      "credential_env": ["LUNARCRUSH_API_KEY"],
+      "enabled_env": "LUNARCRUSH_ENABLED",
+      "live_enabled": false,
+      "deferred": true
+    },
+    "solscan": {
+      "plan": "Lite (deferred)",
+      "cost": "$49/mo — do not buy",
+      "deferred": true,
+      "live_enabled": false
+    },
+    "reddit": {
+      "plan": "Deferred",
+      "deferred": true,
+      "live_enabled": false
+    }
+  }
+}
