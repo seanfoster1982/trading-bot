@@ -239,8 +239,8 @@ def snapshot() -> dict:
 def is_new_buy_halted() -> bool:
     try:
         return snapshot()["mode"] == MODE_HALTED
-    except StopControlError:
-        return True
+    except (StopControlError, sqlite3.DatabaseError):
+        return True  # fail closed on any DB error
 
 
 @dataclass
@@ -409,7 +409,13 @@ def new_buy_gate(*, asset: str | None = None, timeout: float = 60.0) -> Iterator
     entirely inside this context.
     """
     ensure_initialized()
-    with FileLock(SUBMIT_LOCK, timeout=timeout):
+    try:
+        lock = FileLock(SUBMIT_LOCK, timeout=timeout)
+        lock.__enter__()
+    except StopControlError:
+        yield None  # fail closed on lock timeout/error
+        return
+    try:
         try:
             conn = _connect()
         except StopControlError:
@@ -464,6 +470,8 @@ def new_buy_gate(*, asset: str | None = None, timeout: float = 60.0) -> Iterator
         finally:
             if attempt is not None and attempt.result is None:
                 attempt.record_result(RES_BROADCAST_UNKNOWN)
+    finally:
+        lock.__exit__(None, None, None)
 
 
 def classify_broadcast_outcome(txh: str | None, *, error: BaseException | None = None) -> str:
