@@ -32,6 +32,25 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 load_dotenv(ROOT / ".env")
 
+LOCK_PATH = ROOT / "data" / "discord" / "gateway.lock"
+
+
+def _acquire_single_instance() -> object:
+    """Prevent duplicate gateway processes. Returns an open lock file handle to hold."""
+    import msvcrt
+    LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(LOCK_PATH, "a+")
+    try:
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError as e:
+        fh.close()
+        raise SystemExit(f"Another discord_gateway instance is already running ({LOCK_PATH}): {e}")
+    fh.write(str(os.getpid()) + "\n")
+    fh.flush()
+    return fh
+
+
 LOG_DIR = ROOT / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "discord_gateway.log"
@@ -1104,6 +1123,7 @@ def main() -> int:
     if args.connect_test:
         return asyncio.run(connect_test())
     
+    _lock_fh = _acquire_single_instance()
     gateway = DiscordGateway()
     
     try:
