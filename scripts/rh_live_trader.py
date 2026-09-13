@@ -45,6 +45,8 @@ load_dotenv(dotenv_path=ROOT / ".env")
 
 import rh_chain as rh  # noqa: E402
 import telegram_notifier  # noqa: E402
+import risk_engine as re  # noqa: E402
+import decision_record as dr  # noqa: E402
 from whale_config import (  # noqa: E402
     RH_BUDGET_USD,
     RH_EXPECTED_ADDRESS,
@@ -98,6 +100,104 @@ def _notify(text: str, *, cooldown_key: str | None = None, cooldown_s: int = 0) 
     telegram_notifier.send(text)
 
 
+
+def migrate_rh_decisions(conn: sqlite3.Connection) -> None:
+    """Create/upgrade rh_decisions non-destructively."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS rh_decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            asset TEXT,
+            chain TEXT NOT NULL,
+            reason TEXT,
+            extra TEXT
+        )
+    """)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(rh_decisions)")}
+    wanted = {
+        "decision_id": "TEXT",
+        "evaluation_id": "TEXT",
+        "decision": "TEXT",
+        "symbol": "TEXT",
+        "chain_id": "INTEGER",
+        "strategy": "TEXT",
+        "strategy_version": "TEXT",
+        "confidence": "REAL",
+        "market_price": "REAL",
+        "proposed_notional_usd": "REAL",
+        "security_status": "TEXT",
+        "risk_status": "TEXT",
+        "risk_code": "TEXT",
+        "expires_at": "INTEGER",
+        "sources_json": "TEXT",
+        "source_freshness_json": "TEXT",
+        "reason_codes_json": "TEXT",
+        "extra_json": "TEXT",
+        "record_json": "TEXT",
+    }
+    for name, typ in wanted.items():
+        if name not in cols:
+            conn.execute(f"ALTER TABLE rh_decisions ADD COLUMN {name} {typ}")
+
+
+def persist_decision(conn: sqlite3.Connection, record: "dr.DecisionRecord") -> None:
+    record = dr.DecisionRecord.model_validate(record.model_dump())
+    s = record.to_storage()
+    reason = ",".join(record.reason_codes) if record.reason_codes else record.risk_code
+    conn.execute(
+        """
+        INSERT INTO rh_decisions (
+            ts, event_type, asset, chain, reason, extra,
+            decision_id, evaluation_id, decision, symbol, chain_id,
+            strategy, strategy_version, confidence, market_price,
+            proposed_notional_usd, security_status, risk_status, risk_code,
+            expires_at, sources_json, source_freshness_json, reason_codes_json,
+            extra_json, record_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            record.timestamp, record.decision.value, record.asset, record.chain,
+            reason, s["extra_json"], record.decision_id, record.evaluation_id,
+            record.decision.value, record.symbol, record.chain_id, record.strategy,
+            record.strategy_version, record.confidence, record.market_price,
+            record.proposed_notional_usd, record.security_status, record.risk_status,
+            record.risk_code, record.expires_at, s["sources_json"],
+            s["source_freshness_json"], s["reason_codes_json"], s["extra_json"],
+            record.model_dump_json(),
+        ),
+    )
+    conn.commit()
+
+
+def rh_buy_verdict(conn: sqlite3.Connection, *, security_blocked: bool = False,
+                   security_reason: str = "") -> "re.RiskVerdict":
+    last = last_buy_at(conn)
+    seconds = None if last == 0 else time.time() - last
+    return re.evaluate_rh_buy(
+        live_enabled=RH_LIVE_ENABLED,
+        halted=is_halted(),
+        chain_id=rh.RH_CHAIN_ID,
+        trade_usd=RH_TRADE_USD,
+        budget_left=budget_left(conn),
+        open_count=open_count(conn),
+        max_open=RH_MAX_OPEN,
+        realized_pnl=realized_pnl(conn),
+        max_realized_loss=RH_MAX_REALIZED_LOSS_USD,
+        seconds_since_last_buy=seconds,
+        min_seconds_between_buys=RH_MIN_MINUTES_BETWEEN_BUYS * 60,
+        security_blocked=security_blocked,
+        security_reason=security_reason,
+    )
+
+
+def blocked_record(**kwargs):
+    kwargs.setdefault("decision", dr.Decision.BLOCKED)
+    kwargs.setdefault("risk_status", "VETO")
+    kwargs.setdefault("chain_id", rh.RH_CHAIN_ID)
+    return dr.make_decision(**kwargs)
+
+
 def init_db() -> None:
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.execute("""
@@ -123,6 +223,7 @@ def init_db() -> None:
             pnl_usd REAL
         )
     """)
+    migrate_rh_decisions(conn)
     conn.commit()
     conn.close()
 
@@ -495,18 +596,73 @@ def already_open(conn: sqlite3.Connection, address: str) -> bool:
 def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
             cand: dict, eth_px: float) -> dict | None:
     token = rh.checksum(cand["address"])
+    sym = cand.get("symbol") or "?"
+    src = cand.get("source") or "unknown"
     blocked, reason = rh.is_blocked_token(token, cand.get("symbol"), cand.get("name"))
     if blocked and cand.get("source") != "watchlist":
-        print(f"  skip {cand.get('symbol')}: {reason}")
+        print(f"  skip {sym}: {reason}")
+        persist_decision(
+            conn,
+            blocked_record(
+                asset=token,
+                symbol=sym,
+                reason_codes=["security_block", str(reason)[:80]],
+                risk_code="security_block",
+                security_status="BLOCK",
+                sources=[src],
+                proposed_notional_usd=RH_TRADE_USD,
+            ),
+        )
+        return None
+    v = rh_buy_verdict(conn, security_blocked=False)
+    if not v.allow:
+        persist_decision(
+            conn,
+            blocked_record(
+                asset=token,
+                symbol=sym,
+                reason_codes=[v.code],
+                risk_code=v.code,
+                security_status="UNKNOWN",
+                sources=[src],
+                proposed_notional_usd=RH_TRADE_USD,
+                extra={"detail": v.detail},
+            ),
+        )
         return None
     if already_open(conn, token):
         return None
     if eth_px <= 0:
+        persist_decision(
+            conn,
+            dr.make_decision(
+                decision=dr.Decision.NO_TRADE,
+                asset=token,
+                symbol=sym,
+                reason_codes=["missing_eth_price"],
+                risk_status="UNKNOWN",
+                sources=[src],
+            ),
+        )
         return None
     spend_wei = int(RH_TRADE_USD / eth_px * 1e18)
     ok, rt, why = roundtrip_ok(client, account.address, token, spend_wei)
     if not ok:
-        print(f"  skip {cand.get('symbol')}: {why}")
+        print(f"  skip {sym}: {why}")
+        persist_decision(
+            conn,
+            dr.make_decision(
+                decision=dr.Decision.NO_TRADE,
+                asset=token,
+                symbol=sym,
+                reason_codes=["roundtrip_fail"],
+                risk_status="ALLOW",
+                risk_code="ok",
+                sources=[src],
+                proposed_notional_usd=RH_TRADE_USD,
+                extra={"why": why},
+            ),
+        )
         return None
     quote = zerox_quote(client, rh.NATIVE_ETH, token, spend_wei, account.address)
     ok, why = rh.validate_quote(
@@ -514,11 +670,41 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
         taker=account.address, sell_amount=spend_wei)
     if not ok:
         print(f"  skip quote: {why}")
+        persist_decision(
+            conn,
+            dr.make_decision(
+                decision=dr.Decision.NO_TRADE,
+                asset=token,
+                symbol=sym,
+                reason_codes=["quote_fail"],
+                risk_status="ALLOW",
+                risk_code="ok",
+                sources=[src],
+                proposed_notional_usd=RH_TRADE_USD,
+                extra={"why": why},
+            ),
+        )
         return None
-    print(f"  BUYING {cand.get('symbol')} ${RH_TRADE_USD:.2f} roundtrip={rt:.2f}%")
+    buy_decision = dr.make_decision(
+        decision=dr.Decision.BUY,
+        asset=token,
+        symbol=sym,
+        chain_id=rh.RH_CHAIN_ID,
+        risk_status="ALLOW",
+        risk_code=v.code or "ok",
+        security_status="PASS",
+        proposed_notional_usd=RH_TRADE_USD,
+        sources=[src],
+        reason_codes=["risk_allow", "quote_ok"],
+        extra={"roundtrip_pct": rt},
+    )
+    if not buy_decision.is_executable():
+        persist_decision(conn, buy_decision)
+        return None
+    persist_decision(conn, buy_decision)
+    print(f"  BUYING {sym} ${RH_TRADE_USD:.2f} roundtrip={rt:.2f}%")
     if not maybe_approve(client, account, quote, send=True):
         return None
-    # Re-quote after approve so the 0x order is fresh.
     quote = zerox_quote(client, rh.NATIVE_ETH, token, spend_wei, account.address)
     ok, why = rh.validate_quote(
         quote or {}, sell_token=rh.NATIVE_ETH, buy_token=token,
@@ -526,13 +712,28 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
     if not ok:
         print(f"  skip requote: {why}")
         return None
+    v2 = rh_buy_verdict(conn)
+    if not v2.allow:
+        persist_decision(
+            conn,
+            blocked_record(
+                asset=token,
+                symbol=sym,
+                reason_codes=[v2.code],
+                risk_code=v2.code,
+                sources=[src],
+                proposed_notional_usd=RH_TRADE_USD,
+                extra={"detail": v2.detail, "phase": "pre_send"},
+            ),
+        )
+        return None
     txh = send_quote_tx(client, account, quote, send=True)
     if not txh:
-        telegram_notifier.send(f"RH BUY FAILED {cand.get('symbol')} — not confirmed.")
+        telegram_notifier.send(f"RH BUY FAILED {sym} - not confirmed.")
         return None
     rec = wait_receipt(client, txh)
     if not rec or rh.to_int(rec.get("status")) != 1:
-        telegram_notifier.send(f"RH BUY REVERTED {cand.get('symbol')} {txh}")
+        telegram_notifier.send(f"RH BUY REVERTED {sym} {txh}")
         return None
     decimals = erc20_decimals(client, token)
     raw_bal = erc20_balance(client, token, account.address)
@@ -545,14 +746,21 @@ def try_buy(client: httpx.Client, conn: sqlite3.Connection, account,
         (chain_id, address, symbol, source, opened_at, entry_price, usd_spent,
          eth_spent, tokens, buy_tx)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (rh.RH_CHAIN_ID, token, cand.get("symbol") or "?", cand.get("source"),
+    """, (rh.RH_CHAIN_ID, token, sym, src,
           now, entry, RH_TRADE_USD, spend_wei / 1e18, tokens, txh))
     conn.commit()
     telegram_notifier.send(
-        f"<b>RH LIVE BUY</b>\n{cand.get('symbol')} ${RH_TRADE_USD:.0f}\n"
-        f"{rh.RH_EXPLORER}/tx/{txh}\nround-trip est {rt:.2f}%"
+        "[TRADE EXECUTED]\n"
+        f"Asset: {sym}\n"
+        f"Chain: Robinhood {rh.RH_CHAIN_ID}\n"
+        f"Action: BUY\n"
+        f"Amount: ${RH_TRADE_USD:.0f}\n"
+        f"Strategy: {src}\n"
+        f"Primary reasons: decision={buy_decision.decision_id}\n"
+        f"Fees/slippage: round-trip est {rt:.2f}%\n"
+        f"Transaction: {rh.RH_EXPLORER}/tx/{txh}"
     )
-    return {"symbol": cand.get("symbol"), "tx": txh, "buyAmount": buy_amt}
+    return {"symbol": sym, "tx": txh, "buyAmount": buy_amt}
 
 
 def mark_price_usd(client: httpx.Client, token: str) -> float:
@@ -664,6 +872,7 @@ def manage_open(client: httpx.Client, conn: sqlite3.Connection, account,
             WHERE id = ?
         """, (now, close_reason, px, txh, pnl, tid))
         conn.commit()
+        persist_decision(conn, dr.make_decision(decision=dr.Decision.SELL, asset=addr, symbol=str(sym or ""), risk_status="ALLOW", risk_code="ok", reason_codes=[str(close_reason)], sources=["position_manage"]))
         telegram_notifier.send(
             f"<b>RH CLOSE</b> {sym} {close_reason}\nPnL ${pnl:+.2f}\n{txh}")
 
@@ -728,6 +937,8 @@ def cycle() -> None:
             conn.close()
             return
         cands = scan_dexscreener(client)
+        if not cands:
+            persist_decision(conn, dr.make_decision(decision=dr.Decision.NO_TRADE, reason_codes=['no_candidates'], risk_status='UNKNOWN', sources=['dexscreener']))
         print(f"{len(cands)} candidate(s) after liquidity/ticker filters")
         bought = 0
         for cand in cands:
@@ -778,6 +989,8 @@ def status() -> None:
 def scan() -> None:
     with httpx.Client() as client:
         cands = scan_dexscreener(client)
+        if not cands:
+            persist_decision(conn, dr.make_decision(decision=dr.Decision.NO_TRADE, reason_codes=['no_candidates'], risk_status='UNKNOWN', sources=['dexscreener']))
     print(f"{len(cands)} tradable after filters (min liq ${RH_MIN_LIQUIDITY:,.0f})")
     for c in cands:
         print(f"  {c.get('symbol'):12} liq=${c.get('liquidity', 0):,.0f}  "
@@ -863,6 +1076,8 @@ def handle_telegram_commands() -> None:
         elif cmd == "SCAN":
             with httpx.Client() as client:
                 cands = scan_dexscreener(client)[:8]
+                if not cands:
+                    persist_decision(conn, dr.make_decision(decision=dr.Decision.NO_TRADE, reason_codes=['no_candidates'], risk_status='UNKNOWN', sources=['dexscreener']))
             if not cands:
                 telegram_notifier.send("RH SCAN: no candidates this pass.")
                 continue
