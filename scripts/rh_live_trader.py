@@ -270,6 +270,25 @@ def rpc_call(client: httpx.Client, method: str, params: list):
     return body.get("result")
 
 
+def effective_gas_price(client: httpx.Client, suggested: int | None = None) -> int:
+    """Legacy gasPrice floored to current base fee / eth_gasPrice so sends don't
+    die with 'max fee per gas less than block base fee' on RH EIP-1559 blocks.
+    """
+    network = 0
+    try:
+        network = rh.to_int(rpc_call(client, "eth_gasPrice", []) or 0)
+    except Exception:
+        pass
+    base = 0
+    try:
+        block = rpc_call(client, "eth_getBlockByNumber", ["latest", False]) or {}
+        base = rh.to_int(block.get("baseFeePerGas") or 0)
+    except Exception:
+        pass
+    floor = max(int(suggested or 0), network, int(base * 1.25) if base else 0)
+    return floor if floor > 0 else 1_000_000_000
+
+
 def eth_balance(client: httpx.Client, address: str) -> float:
     wei = rh.to_int(rpc_call(client, "eth_getBalance", [rh.checksum(address), "latest"]))
     return wei / 1e18
@@ -370,7 +389,12 @@ def sign_and_maybe_send(client: httpx.Client, account, tx_dict: dict,
     if not send:
         print(f"  signed (NOT sent) {txh}")
         return txh
-    result = rpc_call(client, "eth_sendRawTransaction", [to_hex(raw)])
+    try:
+        result = rpc_call(client, "eth_sendRawTransaction", [to_hex(raw)])
+    except Exception as e:
+        # Fee spikes / RPC rejects must not abort the whole scheduled cycle.
+        print(f"  broadcast failed: {e}")
+        return None
     print(f"  broadcast {result}")
     return result
 
@@ -388,12 +412,13 @@ def send_quote_tx(client: httpx.Client, account, quote: dict, send: bool) -> str
     tx = quote["transaction"]
     nonce = rh.to_int(rpc_call(
         client, "eth_getTransactionCount", [account.address, "pending"]))
+    suggested = rh.to_int(tx.get("gasPrice") or tx.get("maxFeePerGas") or 0)
     assembled = rh.assemble_legacy_tx(
         to=tx["to"],
         data=tx["data"],
         value=rh.to_int(tx.get("value")),
         gas=int(rh.to_int(tx.get("gas")) * 1.2),
-        gas_price=rh.to_int(tx.get("gasPrice") or tx.get("maxFeePerGas")),
+        gas_price=effective_gas_price(client, suggested),
         nonce=nonce,
     )
     return sign_and_maybe_send(client, account, assembled, send)
@@ -414,7 +439,7 @@ def maybe_approve(client: httpx.Client, account, quote: dict, send: bool) -> boo
     amount = rh.to_int(quote.get("sellAmount"))
     nonce = rh.to_int(rpc_call(
         client, "eth_getTransactionCount", [account.address, "pending"]))
-    gas_price = rh.to_int(rpc_call(client, "eth_gasPrice", []))
+    gas_price = effective_gas_price(client, None)
     assembled = rh.assemble_legacy_tx(
         to=sell,
         data=rh.calldata_approve(spender, amount),
@@ -987,16 +1012,20 @@ def status() -> None:
 
 
 def scan() -> None:
-    with httpx.Client() as client:
-        cands = scan_dexscreener(client)
-        if not cands:
-            persist_decision(conn, dr.make_decision(decision=dr.Decision.NO_TRADE, reason_codes=['no_candidates'], risk_status='UNKNOWN', sources=['dexscreener']))
-    print(f"{len(cands)} tradable after filters (min liq ${RH_MIN_LIQUIDITY:,.0f})")
-    for c in cands:
-        print(f"  {c.get('symbol'):12} liq=${c.get('liquidity', 0):,.0f}  "
-              f"vol1h=${c.get('volume_1h', 0):,.0f}  age={c.get('age_min') or 0:.0f}m  "
-              f"{c.get('address')}  [{c.get('source')}]")
-
+    init_db()
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        with httpx.Client() as client:
+            cands = scan_dexscreener(client)
+            if not cands:
+                persist_decision(conn, dr.make_decision(decision=dr.Decision.NO_TRADE, reason_codes=['no_candidates'], risk_status='UNKNOWN', sources=['dexscreener']))
+        print(f"{len(cands)} tradable after filters (min liq ${RH_MIN_LIQUIDITY:,.0f})")
+        for c in cands:
+            print(f"  {c.get('symbol'):12} liq=${c.get('liquidity', 0):,.0f}  "
+                  f"vol1h=${c.get('volume_1h', 0):,.0f}  age={c.get('age_min') or 0:.0f}m  "
+                  f"{c.get('address')}  [{c.get('source')}]")
+    finally:
+        conn.close()
 
 def test_plumbing() -> None:
     """Quote ETH -> USDG for ~$1, validate, sign if key present, never send."""
@@ -1074,22 +1103,25 @@ def handle_telegram_commands() -> None:
         elif cmd == "STATUS":
             telegram_notifier.send(build_report())
         elif cmd == "SCAN":
-            with httpx.Client() as client:
-                cands = scan_dexscreener(client)[:8]
+            conn = sqlite3.connect(DB_PATH, timeout=30)
+            try:
+                with httpx.Client() as client:
+                    cands = scan_dexscreener(client)[:8]
                 if not cands:
                     persist_decision(conn, dr.make_decision(decision=dr.Decision.NO_TRADE, reason_codes=['no_candidates'], risk_status='UNKNOWN', sources=['dexscreener']))
-            if not cands:
-                telegram_notifier.send("RH SCAN: no candidates this pass.")
-                continue
-            lines = ["<b>RH SCAN</b>"]
-            for c in cands:
-                age = c.get("age_min")
-                age_s = f"{age:.0f}m" if age is not None else "?"
-                lines.append(
-                    f"{c.get('symbol')} [{c.get('source')}] liq ${c.get('liquidity', 0):,.0f} "
-                    f"age {age_s}"
-                )
-            telegram_notifier.send("\n".join(lines))
+                    telegram_notifier.send("RH SCAN: no candidates this pass.")
+                    continue
+                lines_out = ["<b>RH SCAN</b>"]
+                for c in cands:
+                    age = c.get("age_min")
+                    age_s = f"{age:.0f}m" if age is not None else "?"
+                    lines_out.append(
+                        f"{c.get('symbol')} [{c.get('source')}] liq ${c.get('liquidity', 0):,.0f} "
+                        f"age {age_s}"
+                    )
+                telegram_notifier.send("\n".join(lines_out))
+            finally:
+                conn.close()
 
 
 def test_telegram() -> int:
@@ -1122,5 +1154,25 @@ def main() -> None:
     cycle()
 
 
+def _log_crash(exc: BaseException) -> None:
+    """Append traceback to logs/rh_live_trader.log — never dump env/secrets."""
+    try:
+        log_dir = ROOT / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "rh_live_trader.log"
+        import traceback
+        from datetime import datetime
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(f"\n===== {datetime.now().isoformat(timespec='seconds')} =====\n")
+            fh.write(f"{type(exc).__name__}: {exc}\n")
+            traceback.print_exc(file=fh)
+    except Exception:
+        pass
+
+
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        _log_crash(e)
+        raise
