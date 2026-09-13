@@ -87,6 +87,16 @@ def _get_config() -> dict:
     }
 
 
+def start_gateway() -> None:
+    """Compat entry for integration doctor / stubs. Refuses when disabled or unconfigured."""
+    if not _enabled():
+        raise RuntimeError("DISCORD_ENABLED is false; refusing to start Discord gateway")
+    cfg = _get_config()
+    if not cfg["token"]:
+        raise RuntimeError("DISCORD_BOT_TOKEN missing; refusing to start Discord gateway")
+    raise RuntimeError("start_gateway is a check-only shim; run scripts/discord_gateway.py as a process")
+
+
 def check() -> int:
     """Verify env presence, IDs parse, dependencies, stop_control import, sqlite access. No trading/RPC."""
     print("DISCORD GATEWAY CHECK")
